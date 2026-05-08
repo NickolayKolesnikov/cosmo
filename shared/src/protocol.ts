@@ -1,18 +1,20 @@
-export type Vec2_t = {
+export type Vec3_t = {
   x: number;
   y: number;
+  z: number;
 };
 
-export const ARENA_SIZE_PX = 560;
-export const PLAYER_DOT_SIZE_PX = 18;
-export const PLAYER_RADIUS_PX = PLAYER_DOT_SIZE_PX / 2;
+export const WORLD_HALF_EXTENT = 180;
 
 export type PlayerId_t = string;
 export type RoomId_t = string;
 
 export type PlayerState_t = {
   id: PlayerId_t;
-  position: Vec2_t;
+  position: Vec3_t;
+  yaw: number;
+  pitch: number;
+  roll: number;
   color: string;
 };
 
@@ -33,9 +35,15 @@ export type RoomSummary_t = {
 
 export type ClientMessage_t =
   | {
-      type: "move";
-      dx: number;
-      dy: number;
+      type: "input";
+      forward: number;
+      strafe: number;
+    }
+  | {
+      type: "look";
+      yaw: number;
+      pitch: number;
+      roll: number;
     }
   | {
       type: "create_room";

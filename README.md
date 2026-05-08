@@ -18,6 +18,15 @@ Monorepo starter for a multiplayer game using:
 - Client: `5173`
 - Server (HTTP + WS): `5001`
 
+## 3D Controls
+
+- Click inside 3D viewport to lock mouse pointer
+- Move mouse to change orientation (yaw/pitch)
+- `W/S` fly forward/backward relative to camera orientation
+- `A/D` strafe left/right
+- Your own player model is not rendered (first-person view)
+- Other players are rendered as pyramids
+
 ## Next Steps
 
 1. Add room/session management on the server.

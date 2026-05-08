@@ -10,7 +10,7 @@ import type {
   ServerMessage_t,
   WorldState_t,
 } from "@cosmos/shared";
-import { ARENA_SIZE_PX, PLAYER_RADIUS_PX } from "@cosmos/shared";
+import { WORLD_HALF_EXTENT } from "@cosmos/shared";
 
 type Client_t = {
   playerId: PlayerId_t;
@@ -25,9 +25,13 @@ type Room_t = {
 
 const port = 5001;
 const tickRateHz = 20;
-const moveStep = 12;
-const arenaSize = ARENA_SIZE_PX;
-const playerRadius = PLAYER_RADIUS_PX;
+const moveSpeed = 2.8;
+const worldHalfExtent = WORLD_HALF_EXTENT;
+
+type InputState_t = {
+  forward: number;
+  strafe: number;
+};
 
 const httpServer = createServer((_, res) => {
   res.writeHead(200, { "Content-Type": "application/json" });
@@ -38,6 +42,7 @@ const wss = new WebSocketServer({ server: httpServer });
 
 const clients = new Map<PlayerId_t, Client_t>();
 const players = new Map<PlayerId_t, PlayerState_t>();
+const inputs = new Map<PlayerId_t, InputState_t>();
 const rooms = new Map<RoomId_t, Room_t>();
 const playerRoomById = new Map<PlayerId_t, RoomId_t | null>();
 
@@ -154,20 +159,71 @@ const clamp = (value: number, min: number, max: number): number => {
   return value;
 };
 
+const clampAxis = (value: number): number => {
+  return clamp(value, -worldHalfExtent, worldHalfExtent);
+};
+
+const normalizeAxisInput = (value: number): number => {
+  return clamp(value, -1, 1);
+};
+
+const tickSimulation = (): void => {
+  for (const [playerId, state] of players.entries()) {
+    const roomId = playerRoomById.get(playerId);
+    if (!roomId) {
+      continue;
+    }
+
+    const input = inputs.get(playerId) ?? { forward: 0, strafe: 0 };
+    if (input.forward === 0 && input.strafe === 0) {
+      continue;
+    }
+
+    const cosPitch = Math.cos(state.pitch);
+    const forwardX = -Math.sin(state.yaw) * cosPitch;
+    const forwardY = Math.sin(state.pitch);
+    const forwardZ = -Math.cos(state.yaw) * cosPitch;
+
+    const baseRightX = Math.cos(state.yaw);
+    const baseRightY = 0;
+    const baseRightZ = -Math.sin(state.yaw);
+
+    const baseUpX = Math.sin(state.yaw) * Math.sin(state.pitch);
+    const baseUpY = Math.cos(state.pitch);
+    const baseUpZ = Math.cos(state.yaw) * Math.sin(state.pitch);
+
+    const cosRoll = Math.cos(state.roll);
+    const sinRoll = Math.sin(state.roll);
+
+    const rightX = baseRightX * cosRoll + baseUpX * sinRoll;
+    const rightY = baseRightY * cosRoll + baseUpY * sinRoll;
+    const rightZ = baseRightZ * cosRoll + baseUpZ * sinRoll;
+
+    state.position.x = clampAxis(state.position.x + (forwardX * input.forward + rightX * input.strafe) * moveSpeed);
+    state.position.y = clampAxis(state.position.y + (forwardY * input.forward + rightY * input.strafe) * moveSpeed);
+    state.position.z = clampAxis(state.position.z + (forwardZ * input.forward + rightZ * input.strafe) * moveSpeed);
+  }
+};
+
 wss.on("connection", (socket) => {
   const playerId = randomUUID();
 
   const playerState: PlayerState_t = {
     id: playerId,
     position: {
-      x: playerRadius + Math.floor(Math.random() * (arenaSize - playerRadius * 2 + 1)),
-      y: playerRadius + Math.floor(Math.random() * (arenaSize - playerRadius * 2 + 1)),
+      x: Math.floor(Math.random() * (worldHalfExtent * 2 + 1)) - worldHalfExtent,
+      y: 0,
+      z: Math.floor(Math.random() * (worldHalfExtent * 2 + 1)) - worldHalfExtent,
     },
+    yaw: 0,
+    pitch: 0,
+    roll: 0,
     color: `hsl(${Math.floor(Math.random() * 360)} 80% 55%)`,
   };
 
   players.set(playerId, playerState);
   clients.set(playerId, { playerId, socket });
+  inputs.set(playerId, { forward: 0, strafe: 0 });
   playerRoomById.set(playerId, null);
 
   send(socket, { type: "welcome", playerId });
@@ -188,13 +244,22 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    if (message.type === "move") {
+    if (message.type === "input") {
       if (!playerRoomById.get(playerId)) {
         return;
       }
 
-      state.position.x = clamp(state.position.x + message.dx * moveStep, playerRadius, arenaSize - playerRadius);
-      state.position.y = clamp(state.position.y + message.dy * moveStep, playerRadius, arenaSize - playerRadius);
+      inputs.set(playerId, {
+        forward: normalizeAxisInput(message.forward),
+        strafe: normalizeAxisInput(message.strafe),
+      });
+      return;
+    }
+
+    if (message.type === "look") {
+      state.yaw = message.yaw;
+      state.pitch = message.pitch;
+      state.roll = message.roll;
       return;
     }
 
@@ -228,6 +293,7 @@ wss.on("connection", (socket) => {
   socket.on("close", () => {
     leaveCurrentRoom(playerId);
     playerRoomById.delete(playerId);
+    inputs.delete(playerId);
     clients.delete(playerId);
     players.delete(playerId);
     broadcastWorld();
@@ -235,6 +301,7 @@ wss.on("connection", (socket) => {
 });
 
 setInterval(() => {
+  tickSimulation();
   broadcastWorld();
 }, 1000 / tickRateHz);
 

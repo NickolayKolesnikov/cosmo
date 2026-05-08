@@ -87,28 +87,25 @@ button:disabled {
   padding-left: 18px;
 }
 
-.arena {
+.arena3d {
   margin-top: 16px;
-  width: min(100%, 560px);
-  aspect-ratio: 1;
+  width: 100%;
+  max-width: 860px;
+  height: min(62vh, 620px);
   border: 2px solid rgba(255, 255, 255, 0.25);
   border-radius: 16px;
-  position: relative;
-  background:
-    linear-gradient(0deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.04)),
-    repeating-linear-gradient(0deg, transparent 0 19px, rgba(255, 255, 255, 0.06) 20px),
-    repeating-linear-gradient(90deg, transparent 0 19px, rgba(255, 255, 255, 0.06) 20px);
+  background: rgba(9, 14, 26, 0.66);
   overflow: hidden;
 }
 
-.dot {
-  position: absolute;
-  border-radius: 999px;
-  transform: translate(-50%, -50%);
-  transition: left 60ms linear, top 60ms linear;
+.viewport3d {
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
 }
 
-.dot.self {
-  outline: 2px solid #ffffff;
-  outline-offset: 2px;
+.viewport3d canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
