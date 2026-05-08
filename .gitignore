@@ -6,3 +6,10 @@ client/dist/
 server/dist/
 shared/dist/
 *.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+coverage/
+tmp/
+temp/
