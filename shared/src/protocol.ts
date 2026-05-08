@@ -26,6 +26,14 @@ export type ProjectileState_t = {
   velocity: Vec3_t;
 };
 
+export type MissileState_t = {
+  id: string;
+  ownerId: PlayerId_t;
+  targetId: PlayerId_t;
+  position: Vec3_t;
+  velocity: Vec3_t;
+};
+
 export type ExplosionState_t = {
   id: string;
   position: Vec3_t;
@@ -39,6 +47,7 @@ export type WorldState_t = {
   availableRooms: RoomSummary_t[];
   players: PlayerState_t[];
   projectiles: ProjectileState_t[];
+  missiles: MissileState_t[];
   explosions: ExplosionState_t[];
   serverTimeMs: number;
 };
@@ -63,6 +72,10 @@ export type ClientMessage_t =
     }
   | {
       type: "shoot";
+    }
+  | {
+      type: "launch_homing";
+      targetId: PlayerId_t;
     }
   | {
       type: "create_room";

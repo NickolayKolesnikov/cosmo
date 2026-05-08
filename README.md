@@ -26,9 +26,11 @@ Monorepo starter for a multiplayer game using:
 - `A/D` strafe left/right
 - `Q/E` roll camera around optical axis
 - Left mouse button fires spherical projectiles
+- Right mouse button launches a homing missile when crosshair is red over a target
 - Your own player model is not rendered (first-person view)
 - Other players are rendered as pyramids
 - Projectile hits destroy ships and trigger a short explosion effect
+- Homing missiles are rendered as red cylinders and explode on hitting any player or projectile
 
 ## Next Steps
 

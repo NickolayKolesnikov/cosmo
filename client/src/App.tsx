@@ -7,13 +7,16 @@ import {
   BoxGeometry,
   Color,
   ConeGeometry,
+  CylinderGeometry,
   DirectionalLight,
   GridHelper,
   Mesh,
   MeshStandardMaterial,
   PerspectiveCamera,
+  Raycaster,
   Scene,
   SphereGeometry,
+  Vector2,
   Vector3,
   WebGLRenderer,
 } from "three";
@@ -40,6 +43,7 @@ export function App() {
     availableRooms: [],
     players: [],
     projectiles: [],
+    missiles: [],
     explosions: [],
     serverTimeMs: 0,
   });
@@ -47,6 +51,7 @@ export function App() {
   const [roomName, setRoomName] = useState<string>("");
   const [errorText, setErrorText] = useState<string>("");
   const [isPointerLocked, setIsPointerLocked] = useState<boolean>(false);
+  const [isCrosshairHot, setIsCrosshairHot] = useState<boolean>(false);
 
   const worldRef = useRef<WorldState_t>(world);
   const playerIdRef = useRef<string>("");
@@ -58,8 +63,15 @@ export function App() {
   const threeRef = useRef<ThreeContext_t | null>(null);
   const meshesRef = useRef(new Map<string, Mesh>());
   const projectileMeshesRef = useRef(new Map<string, Mesh>());
+  const missileMeshesRef = useRef(new Map<string, Mesh>());
   const explosionMeshesRef = useRef(new Map<string, Mesh>());
   const keyStateRef = useRef({ w: false, a: false, s: false, d: false, q: false, e: false });
+  const centerNdcRef = useRef(new Vector2(0, 0));
+  const raycasterRef = useRef(new Raycaster());
+  const isCrosshairHotRef = useRef(false);
+  const hoveredTargetIdRef = useRef<string | null>(null);
+  const missileUpAxisRef = useRef(new Vector3(0, 1, 0));
+  const missileDirRef = useRef(new Vector3());
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -150,6 +162,29 @@ export function App() {
       rollRef.current += rollInput * rollStepPerFrame;
       camera.rotation.z = rollRef.current;
 
+      const raycaster = raycasterRef.current;
+      const targetMeshes = [...meshesRef.current.values()];
+      let isHot = false;
+      let hoveredTargetId: string | null = null;
+      if (targetMeshes.length > 0 && worldRef.current.roomId) {
+        raycaster.setFromCamera(centerNdcRef.current, camera);
+        const hits = raycaster.intersectObjects(targetMeshes, false);
+        isHot = hits.length > 0;
+        if (isHot) {
+          const firstHit = hits[0];
+          if (firstHit) {
+            hoveredTargetId = (firstHit.object.userData.playerId as string | undefined) ?? null;
+          }
+        }
+      }
+
+      hoveredTargetIdRef.current = hoveredTargetId;
+
+      if (isHot !== isCrosshairHotRef.current) {
+        isCrosshairHotRef.current = isHot;
+        setIsCrosshairHot(isHot);
+      }
+
       if (rollInput !== 0 && worldRef.current.roomId) {
         sendLook();
       }
@@ -173,6 +208,11 @@ export function App() {
         (mesh.material as MeshStandardMaterial).dispose();
       }
       projectileMeshesRef.current.clear();
+      for (const mesh of missileMeshesRef.current.values()) {
+        mesh.geometry.dispose();
+        (mesh.material as MeshStandardMaterial).dispose();
+      }
+      missileMeshesRef.current.clear();
       for (const mesh of explosionMeshesRef.current.values()) {
         mesh.geometry.dispose();
         (mesh.material as MeshStandardMaterial).dispose();
@@ -213,6 +253,7 @@ export function App() {
         geometry.rotateX(-Math.PI / 2);
         const material = new MeshStandardMaterial({ color: player.color });
         mesh = new Mesh(geometry, material);
+        mesh.userData.playerId = player.id;
         meshesRef.current.set(player.id, mesh);
         threeContext.scene.add(mesh);
       }
@@ -258,6 +299,37 @@ export function App() {
       mesh.geometry.dispose();
       (mesh.material as MeshStandardMaterial).dispose();
       projectileMeshesRef.current.delete(id);
+    }
+
+    const visibleMissileIds = new Set<string>();
+    for (const missile of world.missiles) {
+      visibleMissileIds.add(missile.id);
+      let mesh = missileMeshesRef.current.get(missile.id);
+      if (!mesh) {
+        mesh = new Mesh(
+          new CylinderGeometry(0.9, 0.9, 5.2, 14),
+          new MeshStandardMaterial({ color: "#ff3d3d", emissive: "#8e0000", emissiveIntensity: 1.25 })
+        );
+        missileMeshesRef.current.set(missile.id, mesh);
+        threeContext.scene.add(mesh);
+      }
+
+      mesh.position.set(missile.position.x, missile.position.y, missile.position.z);
+      missileDirRef.current.set(missile.velocity.x, missile.velocity.y, missile.velocity.z).normalize();
+      if (missileDirRef.current.lengthSq() > 0.00001) {
+        mesh.quaternion.setFromUnitVectors(missileUpAxisRef.current, missileDirRef.current);
+      }
+    }
+
+    for (const [id, mesh] of missileMeshesRef.current.entries()) {
+      if (visibleMissileIds.has(id)) {
+        continue;
+      }
+
+      threeContext.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as MeshStandardMaterial).dispose();
+      missileMeshesRef.current.delete(id);
     }
 
     const visibleExplosionIds = new Set<string>();
@@ -331,7 +403,7 @@ export function App() {
 
   useEffect(() => {
     const onMouseDown = (event: MouseEvent) => {
-      if (event.button !== 0) {
+      if (event.button !== 0 && event.button !== 2) {
         return;
       }
 
@@ -339,12 +411,33 @@ export function App() {
         return;
       }
 
-      sendMessage({ type: "shoot" });
+      if (event.button === 0) {
+        sendMessage({ type: "shoot" });
+        return;
+      }
+
+      const targetId = hoveredTargetIdRef.current;
+      if (!targetId || !isCrosshairHotRef.current) {
+        return;
+      }
+
+      sendMessage({
+        type: "launch_homing",
+        targetId,
+      });
+    };
+
+    const onContextMenu = (event: MouseEvent) => {
+      if (isPointerLocked) {
+        event.preventDefault();
+      }
     };
 
     window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("contextmenu", onContextMenu);
     return () => {
       window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("contextmenu", onContextMenu);
     };
   }, [isPointerLocked]);
 
@@ -514,7 +607,7 @@ export function App() {
       </p>
       <p>
         {world.roomId
-          ? "Click 3D view to lock mouse. Move mouse to rotate. W/S fly forward/back, A/D strafe, Q/E roll, LMB shoot."
+          ? "Click 3D view to lock mouse. Move mouse to rotate. W/S fly forward/back, A/D strafe, Q/E roll, LMB shoot, RMB launch homing missile on red target."
           : "Create or join a room to start playing."}
       </p>
       <p>Mouse lock: {isPointerLocked ? "active" : "inactive"}</p>
@@ -573,7 +666,7 @@ export function App() {
             }
           }}
         >
-          <div className="crosshair" aria-hidden="true" />
+          <div className={`crosshair ${isCrosshairHot ? "hot" : ""}`} aria-hidden="true" />
         </div>
       </section>
     </main>

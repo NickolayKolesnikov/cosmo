@@ -129,6 +129,12 @@ button:disabled {
   box-shadow: 0 0 6px rgba(0, 0, 0, 0.55);
 }
 
+.crosshair.hot::before,
+.crosshair.hot::after {
+  background: rgba(255, 84, 84, 0.98);
+  box-shadow: 0 0 10px rgba(255, 20, 20, 0.75);
+}
+
 .crosshair::before {
   left: 50%;
   top: 0;
