@@ -24,8 +24,11 @@ Monorepo starter for a multiplayer game using:
 - Move mouse to change orientation (yaw/pitch)
 - `W/S` fly forward/backward relative to camera orientation
 - `A/D` strafe left/right
+- `Q/E` roll camera around optical axis
+- Left mouse button fires spherical projectiles
 - Your own player model is not rendered (first-person view)
 - Other players are rendered as pyramids
+- Projectile hits destroy ships and trigger a short explosion effect
 
 ## Next Steps
 

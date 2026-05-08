@@ -15,7 +15,21 @@ export type PlayerState_t = {
   yaw: number;
   pitch: number;
   roll: number;
+  isAlive: boolean;
   color: string;
+};
+
+export type ProjectileState_t = {
+  id: string;
+  ownerId: PlayerId_t;
+  position: Vec3_t;
+  velocity: Vec3_t;
+};
+
+export type ExplosionState_t = {
+  id: string;
+  position: Vec3_t;
+  life: number;
 };
 
 export type WorldState_t = {
@@ -24,6 +38,8 @@ export type WorldState_t = {
   roomPlayerIds: PlayerId_t[];
   availableRooms: RoomSummary_t[];
   players: PlayerState_t[];
+  projectiles: ProjectileState_t[];
+  explosions: ExplosionState_t[];
   serverTimeMs: number;
 };
 
@@ -44,6 +60,9 @@ export type ClientMessage_t =
       yaw: number;
       pitch: number;
       roll: number;
+    }
+  | {
+      type: "shoot";
     }
   | {
       type: "create_room";

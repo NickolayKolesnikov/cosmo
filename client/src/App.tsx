@@ -13,6 +13,7 @@ import {
   MeshStandardMaterial,
   PerspectiveCamera,
   Scene,
+  SphereGeometry,
   Vector3,
   WebGLRenderer,
 } from "three";
@@ -38,6 +39,8 @@ export function App() {
     roomPlayerIds: [],
     availableRooms: [],
     players: [],
+    projectiles: [],
+    explosions: [],
     serverTimeMs: 0,
   });
   const [latencyMs, setLatencyMs] = useState<number>(0);
@@ -54,6 +57,8 @@ export function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const threeRef = useRef<ThreeContext_t | null>(null);
   const meshesRef = useRef(new Map<string, Mesh>());
+  const projectileMeshesRef = useRef(new Map<string, Mesh>());
+  const explosionMeshesRef = useRef(new Map<string, Mesh>());
   const keyStateRef = useRef({ w: false, a: false, s: false, d: false, q: false, e: false });
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -163,6 +168,16 @@ export function App() {
         (mesh.material as MeshStandardMaterial).dispose();
       }
       meshesRef.current.clear();
+      for (const mesh of projectileMeshesRef.current.values()) {
+        mesh.geometry.dispose();
+        (mesh.material as MeshStandardMaterial).dispose();
+      }
+      projectileMeshesRef.current.clear();
+      for (const mesh of explosionMeshesRef.current.values()) {
+        mesh.geometry.dispose();
+        (mesh.material as MeshStandardMaterial).dispose();
+      }
+      explosionMeshesRef.current.clear();
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement);
       }
@@ -177,7 +192,7 @@ export function App() {
       return;
     }
 
-    const visibleIds = new Set<string>();
+    const visiblePlayerIds = new Set<string>();
     for (const player of world.players) {
       if (player.id === playerId) {
         selfPositionRef.current.set(player.position.x, player.position.y, player.position.z);
@@ -187,7 +202,11 @@ export function App() {
         continue;
       }
 
-      visibleIds.add(player.id);
+      if (!player.isAlive) {
+        continue;
+      }
+
+      visiblePlayerIds.add(player.id);
       let mesh = meshesRef.current.get(player.id);
       if (!mesh) {
         const geometry = new ConeGeometry(2.2, 6, 4);
@@ -204,7 +223,7 @@ export function App() {
     }
 
     for (const [id, mesh] of meshesRef.current.entries()) {
-      if (visibleIds.has(id)) {
+      if (visiblePlayerIds.has(id)) {
         continue;
       }
 
@@ -212,6 +231,65 @@ export function App() {
       mesh.geometry.dispose();
       (mesh.material as MeshStandardMaterial).dispose();
       meshesRef.current.delete(id);
+    }
+
+    const visibleProjectileIds = new Set<string>();
+    for (const projectile of world.projectiles) {
+      visibleProjectileIds.add(projectile.id);
+      let mesh = projectileMeshesRef.current.get(projectile.id);
+      if (!mesh) {
+        mesh = new Mesh(
+          new SphereGeometry(1.2, 12, 12),
+          new MeshStandardMaterial({ color: "#e8f6ff", emissive: "#5bc0eb", emissiveIntensity: 1.2 })
+        );
+        projectileMeshesRef.current.set(projectile.id, mesh);
+        threeContext.scene.add(mesh);
+      }
+
+      mesh.position.set(projectile.position.x, projectile.position.y, projectile.position.z);
+    }
+
+    for (const [id, mesh] of projectileMeshesRef.current.entries()) {
+      if (visibleProjectileIds.has(id)) {
+        continue;
+      }
+
+      threeContext.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as MeshStandardMaterial).dispose();
+      projectileMeshesRef.current.delete(id);
+    }
+
+    const visibleExplosionIds = new Set<string>();
+    for (const explosion of world.explosions) {
+      visibleExplosionIds.add(explosion.id);
+      let mesh = explosionMeshesRef.current.get(explosion.id);
+      if (!mesh) {
+        mesh = new Mesh(
+          new SphereGeometry(3.2, 14, 14),
+          new MeshStandardMaterial({ color: "#ff9436", emissive: "#ff5d2d", emissiveIntensity: 1.8, transparent: true })
+        );
+        explosionMeshesRef.current.set(explosion.id, mesh);
+        threeContext.scene.add(mesh);
+      }
+
+      const life = Math.max(0, Math.min(1, explosion.life));
+      const scale = 0.5 + (1 - life) * 3.2;
+      mesh.position.set(explosion.position.x, explosion.position.y, explosion.position.z);
+      mesh.scale.set(scale, scale, scale);
+      const material = mesh.material as MeshStandardMaterial;
+      material.opacity = life * 0.85;
+    }
+
+    for (const [id, mesh] of explosionMeshesRef.current.entries()) {
+      if (visibleExplosionIds.has(id)) {
+        continue;
+      }
+
+      threeContext.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as MeshStandardMaterial).dispose();
+      explosionMeshesRef.current.delete(id);
     }
   }, [playerId, world]);
 
@@ -248,6 +326,25 @@ export function App() {
     window.addEventListener("mousemove", onMouseMove);
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
+    };
+  }, [isPointerLocked]);
+
+  useEffect(() => {
+    const onMouseDown = (event: MouseEvent) => {
+      if (event.button !== 0) {
+        return;
+      }
+
+      if (!isPointerLocked || !worldRef.current.roomId) {
+        return;
+      }
+
+      sendMessage({ type: "shoot" });
+    };
+
+    window.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("mousedown", onMouseDown);
     };
   }, [isPointerLocked]);
 
@@ -417,7 +514,7 @@ export function App() {
       </p>
       <p>
         {world.roomId
-          ? "Click 3D view to lock mouse. Move mouse to rotate. W/S fly forward/back, A/D strafe."
+          ? "Click 3D view to lock mouse. Move mouse to rotate. W/S fly forward/back, A/D strafe, Q/E roll, LMB shoot."
           : "Create or join a room to start playing."}
       </p>
       <p>Mouse lock: {isPointerLocked ? "active" : "inactive"}</p>
@@ -475,7 +572,9 @@ export function App() {
               rendererElement.requestPointerLock();
             }
           }}
-        />
+        >
+          <div className="crosshair" aria-hidden="true" />
+        </div>
       </section>
     </main>
   );

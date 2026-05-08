@@ -101,6 +101,7 @@ button:disabled {
 .viewport3d {
   width: 100%;
   height: 100%;
+  position: relative;
   cursor: crosshair;
 }
 
@@ -108,4 +109,38 @@ button:disabled {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.crosshair::before,
+.crosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.55);
+}
+
+.crosshair::before {
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+
+.crosshair::after {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  transform: translateY(-50%);
 }
