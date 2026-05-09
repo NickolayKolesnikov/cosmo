@@ -12,6 +12,8 @@ import type {
   RoomId_t,
   RoomSummary_t,
   ServerMessage_t,
+  SupplyCubeType_t,
+  SupplyCubeState_t,
   Vec3_t,
   WorldState_t,
 } from "@cosmos/shared";
@@ -47,8 +49,12 @@ const shootCooldownMs = 180;
 const homingCooldownMs = 1200;
 const hitRadius = 5;
 const missileHitRadius = 4.2;
+const supplyCubePickupRadius = 6;
+const supplyCubeHitRadius = 5;
+const supplyCubesPerRoom = 5;
 const respawnDelayMs = 1400;
 const projectileSpawnOffset = 6;
+const supplyCubeTypes: SupplyCubeType_t[] = ["projectile_ammo", "missile_ammo", "health"];
 
 type InputState_t = {
   forward: number;
@@ -72,6 +78,10 @@ type Missile_t = MissileState_t & {
   lostTarget: boolean;
 };
 
+type SupplyCube_t = SupplyCubeState_t & {
+  roomId: RoomId_t;
+};
+
 const httpServer = createServer((_, res) => {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ ok: true, service: "cosmos-server" }));
@@ -88,6 +98,7 @@ const playerRoomById = new Map<PlayerId_t, RoomId_t | null>();
 const projectiles = new Map<string, Projectile_t>();
 const missiles = new Map<string, Missile_t>();
 const explosions = new Map<string, Explosion_t>();
+const supplyCubes = new Map<string, SupplyCube_t>();
 const lastShotAtMsByPlayer = new Map<PlayerId_t, number>();
 const lastHomingAtMsByPlayer = new Map<PlayerId_t, number>();
 const respawnTimerByPlayer = new Map<PlayerId_t, ReturnType<typeof setTimeout>>();
@@ -120,6 +131,7 @@ const buildWorldStateForPlayer = (playerId: PlayerId_t): WorldState_t => {
   const roomProjectiles: ProjectileState_t[] = [];
   const roomMissiles: MissileState_t[] = [];
   const roomExplosions: ExplosionState_t[] = [];
+  const roomSupplyCubes: SupplyCubeState_t[] = [];
 
   if (roomId) {
     for (const projectile of projectiles.values()) {
@@ -154,6 +166,16 @@ const buildWorldStateForPlayer = (playerId: PlayerId_t): WorldState_t => {
         });
       }
     }
+
+    for (const supplyCube of supplyCubes.values()) {
+      if (supplyCube.roomId === roomId) {
+        roomSupplyCubes.push({
+          id: supplyCube.id,
+          position: supplyCube.position,
+          cubeType: supplyCube.cubeType,
+        });
+      }
+    }
   }
 
   return {
@@ -165,6 +187,7 @@ const buildWorldStateForPlayer = (playerId: PlayerId_t): WorldState_t => {
     projectiles: roomProjectiles,
     missiles: roomMissiles,
     explosions: roomExplosions,
+    supplyCubes: roomSupplyCubes,
     serverTimeMs: Date.now(),
   };
 };
@@ -227,7 +250,25 @@ const leaveCurrentRoom = (playerId: PlayerId_t): void => {
       }
     }
 
+    for (const [supplyCubeId, supplyCube] of supplyCubes.entries()) {
+      if (supplyCube.roomId === roomId) {
+        supplyCubes.delete(supplyCubeId);
+      }
+    }
+
     rooms.delete(roomId);
+  }
+};
+
+const spawnSupplyCubesForRoom = (roomId: RoomId_t): void => {
+  for (let i = 0; i < supplyCubesPerRoom; i += 1) {
+    const id = randomUUID().slice(0, 12);
+    supplyCubes.set(id, {
+      id,
+      roomId,
+      position: randomSpawnPosition(),
+      cubeType: supplyCubeTypes[i % supplyCubeTypes.length] ?? "projectile_ammo",
+    });
   }
 };
 
@@ -253,6 +294,8 @@ const createRoom = (creatorId: PlayerId_t, roomNameRaw: string): RoomId_t => {
     name: roomName,
     playerIds: new Set<PlayerId_t>(),
   });
+
+  spawnSupplyCubesForRoom(roomId);
 
   joinRoom(creatorId, roomId);
   return roomId;
@@ -503,6 +546,29 @@ const tickSimulation = (): void => {
     if (didHit) {
       continue;
     }
+
+    for (const supplyCube of supplyCubes.values()) {
+      if (supplyCube.roomId !== projectile.roomId) {
+        continue;
+      }
+
+      const dx = supplyCube.position.x - projectile.position.x;
+      const dy = supplyCube.position.y - projectile.position.y;
+      const dz = supplyCube.position.z - projectile.position.z;
+      if (dx * dx + dy * dy + dz * dz > supplyCubeHitRadius * supplyCubeHitRadius) {
+        continue;
+      }
+
+      spawnExplosion(projectile.roomId, supplyCube.position);
+      supplyCube.position = randomSpawnPosition();
+      projectiles.delete(projectileId);
+      didHit = true;
+      break;
+    }
+
+    if (didHit) {
+      continue;
+    }
   }
 
   for (const [missileId, missile] of missiles.entries()) {
@@ -593,6 +659,29 @@ const tickSimulation = (): void => {
     if (exploded) {
       continue;
     }
+
+    for (const supplyCube of supplyCubes.values()) {
+      if (supplyCube.roomId !== missile.roomId) {
+        continue;
+      }
+
+      const dx = supplyCube.position.x - missile.position.x;
+      const dy = supplyCube.position.y - missile.position.y;
+      const dz = supplyCube.position.z - missile.position.z;
+      if (dx * dx + dy * dy + dz * dz > supplyCubeHitRadius * supplyCubeHitRadius) {
+        continue;
+      }
+
+      spawnExplosion(missile.roomId, supplyCube.position);
+      supplyCube.position = randomSpawnPosition();
+      missiles.delete(missileId);
+      exploded = true;
+      break;
+    }
+
+    if (exploded) {
+      continue;
+    }
   }
 
   for (const [explosionId, explosion] of explosions.entries()) {
@@ -600,6 +689,35 @@ const tickSimulation = (): void => {
     explosion.life = clamp(explosion.ticksLeft / explosion.maxTicks, 0, 1);
     if (explosion.ticksLeft <= 0) {
       explosions.delete(explosionId);
+    }
+  }
+
+  for (const supplyCube of supplyCubes.values()) {
+    for (const player of players.values()) {
+      if (!player.isAlive) {
+        continue;
+      }
+
+      if (playerRoomById.get(player.id) !== supplyCube.roomId) {
+        continue;
+      }
+
+      const dx = player.position.x - supplyCube.position.x;
+      const dy = player.position.y - supplyCube.position.y;
+      const dz = player.position.z - supplyCube.position.z;
+      if (dx * dx + dy * dy + dz * dz > supplyCubePickupRadius * supplyCubePickupRadius) {
+        continue;
+      }
+
+      if (supplyCube.cubeType === "health") {
+        player.health = maxHealth;
+      } else if (supplyCube.cubeType === "projectile_ammo") {
+        player.projectileAmmo = initialProjectileAmmo;
+      } else {
+        player.missileAmmo = initialMissileAmmo;
+      }
+      supplyCube.position = randomSpawnPosition();
+      break;
     }
   }
 };

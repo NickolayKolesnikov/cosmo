@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { ClientMessage_t, ServerMessage_t, WorldState_t } from "@cosmos/shared";
+import type { ClientMessage_t, ServerMessage_t, SupplyCubeType_t, WorldState_t } from "@cosmos/shared";
 import { WORLD_HALF_EXTENT } from "@cosmos/shared";
 import { wsUrl } from "./config";
 import {
   AmbientLight,
   AxesHelper,
   BoxGeometry,
+  CanvasTexture,
   Color,
   ConeGeometry,
   CylinderGeometry,
@@ -39,6 +40,123 @@ const normalizeAngle = (value: number): number => {
   return angle;
 };
 
+const createProjectileShellTexture = (): CanvasTexture => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return new CanvasTexture(canvas);
+  }
+
+  context.fillStyle = "#5dff91";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = "#1d6b36";
+  context.fillRect(56, 22, 16, 62);
+
+  context.beginPath();
+  context.moveTo(64, 12);
+  context.lineTo(52, 30);
+  context.lineTo(76, 30);
+  context.closePath();
+  context.fill();
+
+  context.fillStyle = "#d3ad64";
+  context.fillRect(50, 84, 28, 24);
+
+  const texture = new CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+};
+
+const createProjectileOrbTexture = (): CanvasTexture => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return new CanvasTexture(canvas);
+  }
+
+  context.fillStyle = "#5dff91";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.beginPath();
+  context.arc(64, 64, 26, 0, Math.PI * 2);
+  context.fillStyle = "#e8f6ff";
+  context.fill();
+
+  context.beginPath();
+  context.arc(64, 64, 16, 0, Math.PI * 2);
+  context.fillStyle = "#5bc0eb";
+  context.fill();
+
+  context.beginPath();
+  context.arc(56, 56, 6, 0, Math.PI * 2);
+  context.fillStyle = "rgba(255, 255, 255, 0.7)";
+  context.fill();
+
+  const texture = new CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+};
+
+const createMedicalCrossTexture = (): CanvasTexture => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return new CanvasTexture(canvas);
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = "#d91a1a";
+  context.fillRect(54, 26, 20, 76);
+  context.fillRect(26, 54, 76, 20);
+
+  const texture = new CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+};
+
+const projectileShellTexture = createProjectileShellTexture();
+const projectileOrbTexture = createProjectileOrbTexture();
+const medicalCrossTexture = createMedicalCrossTexture();
+
+const getSupplyCubeMaterialByType = (cubeType: SupplyCubeType_t): MeshStandardMaterial => {
+  if (cubeType === "projectile_ammo") {
+    return new MeshStandardMaterial({
+      color: "#ffffff",
+      map: projectileOrbTexture,
+      emissive: "#117a2f",
+      emissiveIntensity: 0.95,
+    });
+  }
+
+  if (cubeType === "missile_ammo") {
+    return new MeshStandardMaterial({
+      color: "#ff6161",
+      map: projectileShellTexture,
+      emissive: "#7f1b1b",
+      emissiveIntensity: 0.95,
+    });
+  }
+
+  return new MeshStandardMaterial({
+    color: "#ffffff",
+    map: medicalCrossTexture,
+    emissive: "#5d5d5d",
+    emissiveIntensity: 0.72,
+  });
+};
+
 type ConnectionState_t = "connecting" | "open" | "closed";
 
 type ThreeContext_t = {
@@ -59,6 +177,7 @@ export function App() {
     projectiles: [],
     missiles: [],
     explosions: [],
+    supplyCubes: [],
     serverTimeMs: 0,
   });
   const [latencyMs, setLatencyMs] = useState<number>(0);
@@ -87,6 +206,7 @@ export function App() {
   const projectileMeshesRef = useRef(new Map<string, Mesh>());
   const missileMeshesRef = useRef(new Map<string, Mesh>());
   const explosionMeshesRef = useRef(new Map<string, Mesh>());
+  const supplyCubeMeshesRef = useRef(new Map<string, Mesh>());
   const keyStateRef = useRef({ w: false, a: false, s: false, d: false, q: false, e: false });
   const centerNdcRef = useRef(new Vector2(0, 0));
   const raycasterRef = useRef(new Raycaster());
@@ -220,6 +340,11 @@ export function App() {
         sendLook();
       }
 
+      for (const mesh of supplyCubeMeshesRef.current.values()) {
+        mesh.rotation.x += 0.012;
+        mesh.rotation.y += 0.018;
+      }
+
       renderer.render(scene, camera);
       frameId = window.requestAnimationFrame(draw);
     };
@@ -249,6 +374,11 @@ export function App() {
         (mesh.material as MeshStandardMaterial).dispose();
       }
       explosionMeshesRef.current.clear();
+      for (const mesh of supplyCubeMeshesRef.current.values()) {
+        mesh.geometry.dispose();
+        (mesh.material as MeshStandardMaterial).dispose();
+      }
+      supplyCubeMeshesRef.current.clear();
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement);
       }
@@ -401,6 +531,30 @@ export function App() {
       mesh.geometry.dispose();
       (mesh.material as MeshStandardMaterial).dispose();
       explosionMeshesRef.current.delete(id);
+    }
+
+    const visibleSupplyCubeIds = new Set<string>();
+    for (const supplyCube of world.supplyCubes) {
+      visibleSupplyCubeIds.add(supplyCube.id);
+      let mesh = supplyCubeMeshesRef.current.get(supplyCube.id);
+      if (!mesh) {
+        mesh = new Mesh(new BoxGeometry(4.5, 4.5, 4.5), getSupplyCubeMaterialByType(supplyCube.cubeType));
+        supplyCubeMeshesRef.current.set(supplyCube.id, mesh);
+        threeContext.scene.add(mesh);
+      }
+
+      mesh.position.set(supplyCube.position.x, supplyCube.position.y, supplyCube.position.z);
+    }
+
+    for (const [id, mesh] of supplyCubeMeshesRef.current.entries()) {
+      if (visibleSupplyCubeIds.has(id)) {
+        continue;
+      }
+
+      threeContext.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as MeshStandardMaterial).dispose();
+      supplyCubeMeshesRef.current.delete(id);
     }
   }, [playerId, world]);
 

@@ -51,6 +51,14 @@ export type ExplosionState_t = {
   life: number;
 };
 
+export type SupplyCubeType_t = "projectile_ammo" | "missile_ammo" | "health";
+
+export type SupplyCubeState_t = {
+  id: string;
+  position: Vec3_t;
+  cubeType: SupplyCubeType_t;
+};
+
 export type WorldState_t = {
   roomId: RoomId_t | null;
   roomName: string | null;
@@ -60,6 +68,7 @@ export type WorldState_t = {
   projectiles: ProjectileState_t[];
   missiles: MissileState_t[];
   explosions: ExplosionState_t[];
+  supplyCubes: SupplyCubeState_t[];
   serverTimeMs: number;
 };
 
