@@ -3,31 +3,38 @@ import { randomUUID } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import type {
   ClientMessage_t,
-  ExplosionState_t,
-  MissileState_t,
   PlayerId_t,
   PlayerState_t,
-  ProjectileState_t,
   Quaternion_t,
   RoomId_t,
-  RoomSummary_t,
   ServerMessage_t,
   SupplyCubeType_t,
-  SupplyCubeState_t,
-  Vec3_t,
-  WorldState_t,
 } from "@cosmos/shared";
 import { WORLD_HALF_EXTENT } from "@cosmos/shared";
+import {
+  createRoom,
+  joinRoom,
+  leaveCurrentRoom,
+  type RoomManagerState_t,
+  type Room_t,
+} from "./roomManager.js";
+import {
+  buildWorldStateForPlayer,
+  getForwardVector,
+  tickSimulation,
+  type Explosion_t,
+  type InputState_t,
+  type Missile_t,
+  type Projectile_t,
+  type SimulationSettings_t,
+  type SimulationState_t,
+  type SupplyCube_t,
+} from "./simulation.js";
+import { normalizeAxisInput, normalizeVector, quaternionFromEulerYXZ, randomSpawnPosition } from "./math.js";
 
 type Client_t = {
   playerId: PlayerId_t;
   socket: WebSocket;
-};
-
-type Room_t = {
-  id: RoomId_t;
-  name: string;
-  playerIds: Set<PlayerId_t>;
 };
 
 const port = 5001;
@@ -56,32 +63,6 @@ const respawnDelayMs = 3000;
 const projectileSpawnOffset = 6;
 const supplyCubeTypes: SupplyCubeType_t[] = ["projectile_ammo", "missile_ammo", "health"];
 
-type InputState_t = {
-  forward: number;
-  strafe: number;
-};
-
-type Projectile_t = ProjectileState_t & {
-  roomId: RoomId_t;
-  ticksLeft: number;
-};
-
-type Explosion_t = ExplosionState_t & {
-  roomId: RoomId_t;
-  ticksLeft: number;
-  maxTicks: number;
-};
-
-type Missile_t = MissileState_t & {
-  roomId: RoomId_t;
-  ticksLeft: number;
-  lostTarget: boolean;
-};
-
-type SupplyCube_t = SupplyCubeState_t & {
-  roomId: RoomId_t;
-};
-
 const httpServer = createServer((_, res) => {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ ok: true, service: "cosmos-server" }));
@@ -103,93 +84,50 @@ const lastShotAtMsByPlayer = new Map<PlayerId_t, number>();
 const lastHomingAtMsByPlayer = new Map<PlayerId_t, number>();
 const respawnTimerByPlayer = new Map<PlayerId_t, ReturnType<typeof setTimeout>>();
 
+const simulationState: SimulationState_t = {
+  players,
+  orientationByPlayerId,
+  inputs,
+  playerRoomById,
+  projectiles,
+  missiles,
+  explosions,
+  supplyCubes,
+  respawnTimerByPlayer,
+};
+
+const simulationSettings: SimulationSettings_t = {
+  moveSpeed,
+  worldHalfExtent,
+  projectileSpeed,
+  maxHealth,
+  projectileDamage,
+  missileDamage,
+  missileSpeed,
+  missileTurnLerp,
+  hitRadius,
+  missileHitRadius,
+  supplyCubePickupRadius,
+  supplyCubeHitRadius,
+  explosionLifetimeTicks,
+  respawnDelayMs,
+  initialProjectileAmmo,
+  initialMissileAmmo,
+};
+
+const roomState: RoomManagerState_t = {
+  rooms,
+  playerRoomById,
+  projectiles,
+  missiles,
+  explosions,
+  supplyCubes,
+};
+
+const randomSpawn = (): { x: number; y: number; z: number } => randomSpawnPosition(worldHalfExtent);
+
 const send = (socket: WebSocket, message: ServerMessage_t): void => {
   socket.send(JSON.stringify(message));
-};
-
-const getRoomSummaries = (): RoomSummary_t[] => {
-  const summaries: RoomSummary_t[] = [];
-
-  for (const room of rooms.values()) {
-    summaries.push({
-      id: room.id,
-      name: room.name,
-      playerCount: room.playerIds.size,
-    });
-  }
-
-  return summaries;
-};
-
-const buildWorldStateForPlayer = (playerId: PlayerId_t): WorldState_t => {
-  const roomId = playerRoomById.get(playerId) ?? null;
-  const room = roomId ? rooms.get(roomId) ?? null : null;
-  const roomPlayerIds = room ? [...room.playerIds] : [];
-  const roomPlayers: PlayerState_t[] = roomPlayerIds
-    .map((id) => players.get(id))
-    .filter((state): state is PlayerState_t => Boolean(state));
-  const roomProjectiles: ProjectileState_t[] = [];
-  const roomMissiles: MissileState_t[] = [];
-  const roomExplosions: ExplosionState_t[] = [];
-  const roomSupplyCubes: SupplyCubeState_t[] = [];
-
-  if (roomId) {
-    for (const projectile of projectiles.values()) {
-      if (projectile.roomId === roomId) {
-        roomProjectiles.push({
-          id: projectile.id,
-          ownerId: projectile.ownerId,
-          position: projectile.position,
-          velocity: projectile.velocity,
-        });
-      }
-    }
-
-    for (const missile of missiles.values()) {
-      if (missile.roomId === roomId) {
-        roomMissiles.push({
-          id: missile.id,
-          ownerId: missile.ownerId,
-          targetId: missile.targetId,
-          position: missile.position,
-          velocity: missile.velocity,
-        });
-      }
-    }
-
-    for (const explosion of explosions.values()) {
-      if (explosion.roomId === roomId) {
-        roomExplosions.push({
-          id: explosion.id,
-          position: explosion.position,
-          life: explosion.life,
-        });
-      }
-    }
-
-    for (const supplyCube of supplyCubes.values()) {
-      if (supplyCube.roomId === roomId) {
-        roomSupplyCubes.push({
-          id: supplyCube.id,
-          position: supplyCube.position,
-          cubeType: supplyCube.cubeType,
-        });
-      }
-    }
-  }
-
-  return {
-    roomId,
-    roomName: room?.name ?? null,
-    roomPlayerIds,
-    availableRooms: getRoomSummaries(),
-    players: roomPlayers,
-    projectiles: roomProjectiles,
-    missiles: roomMissiles,
-    explosions: roomExplosions,
-    supplyCubes: roomSupplyCubes,
-    serverTimeMs: Date.now(),
-  };
 };
 
 const sendWorldToPlayer = (playerId: PlayerId_t): void => {
@@ -200,7 +138,7 @@ const sendWorldToPlayer = (playerId: PlayerId_t): void => {
 
   send(client.socket, {
     type: "world",
-    state: buildWorldStateForPlayer(playerId),
+    state: buildWorldStateForPlayer({ playerId, state: roomState, players }),
   });
 };
 
@@ -210,524 +148,11 @@ const broadcastWorld = (): void => {
   }
 };
 
-const leaveCurrentRoom = (playerId: PlayerId_t): void => {
-  const roomId = playerRoomById.get(playerId);
-  if (!roomId) {
-    return;
-  }
 
-  const room = rooms.get(roomId);
-  if (!room) {
-    playerRoomById.set(playerId, null);
-    return;
-  }
-
-  room.playerIds.delete(playerId);
-  playerRoomById.set(playerId, null);
-
-  for (const [projectileId, projectile] of projectiles.entries()) {
-    if (projectile.ownerId === playerId) {
-      projectiles.delete(projectileId);
-    }
-  }
-
-  for (const [missileId, missile] of missiles.entries()) {
-    if (missile.ownerId === playerId || missile.targetId === playerId) {
-      missiles.delete(missileId);
-    }
-  }
-
-  if (room.playerIds.size === 0) {
-    for (const [missileId, missile] of missiles.entries()) {
-      if (missile.roomId === roomId) {
-        missiles.delete(missileId);
-      }
-    }
-
-    for (const [explosionId, explosion] of explosions.entries()) {
-      if (explosion.roomId === roomId) {
-        explosions.delete(explosionId);
-      }
-    }
-
-    for (const [supplyCubeId, supplyCube] of supplyCubes.entries()) {
-      if (supplyCube.roomId === roomId) {
-        supplyCubes.delete(supplyCubeId);
-      }
-    }
-
-    rooms.delete(roomId);
-  }
-};
-
-const spawnSupplyCubesForRoom = (roomId: RoomId_t): void => {
-  for (let i = 0; i < supplyCubesPerRoom; i += 1) {
-    const id = randomUUID().slice(0, 12);
-    supplyCubes.set(id, {
-      id,
-      roomId,
-      position: randomSpawnPosition(),
-      cubeType: supplyCubeTypes[i % supplyCubeTypes.length] ?? "projectile_ammo",
-    });
-  }
-};
-
-const joinRoom = (playerId: PlayerId_t, roomId: RoomId_t): boolean => {
-  const room = rooms.get(roomId);
-  if (!room) {
-    return false;
-  }
-
-  leaveCurrentRoom(playerId);
-  room.playerIds.add(playerId);
-  playerRoomById.set(playerId, roomId);
-  return true;
-};
-
-const createRoom = (creatorId: PlayerId_t, roomNameRaw: string): RoomId_t => {
-  const roomId = randomUUID().slice(0, 8);
-  const cleanName = roomNameRaw.trim();
-  const roomName = cleanName.length > 0 ? cleanName.slice(0, 40) : `Room ${rooms.size + 1}`;
-
-  rooms.set(roomId, {
-    id: roomId,
-    name: roomName,
-    playerIds: new Set<PlayerId_t>(),
-  });
-
-  spawnSupplyCubesForRoom(roomId);
-
-  joinRoom(creatorId, roomId);
-  return roomId;
-};
-
-const clamp = (value: number, min: number, max: number): number => {
-  if (value < min) {
-    return min;
-  }
-
-  if (value > max) {
-    return max;
-  }
-
-  return value;
-};
-
-const clampAxis = (value: number): number => {
-  return clamp(value, -worldHalfExtent, worldHalfExtent);
-};
-
-const normalizeAxisInput = (value: number): number => {
-  return clamp(value, -1, 1);
-};
-
-const normalizeQuaternion = (q: Quaternion_t): Quaternion_t => {
-  const length = Math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-  if (length <= 0.000001) {
-    return { x: 0, y: 0, z: 0, w: 1 };
-  }
-
-  return {
-    x: q.x / length,
-    y: q.y / length,
-    z: q.z / length,
-    w: q.w / length,
-  };
-};
-
-const quaternionFromEulerYXZ = (pitch: number, yaw: number, roll: number): Quaternion_t => {
-  const c1 = Math.cos(pitch / 2);
-  const c2 = Math.cos(yaw / 2);
-  const c3 = Math.cos(roll / 2);
-  const s1 = Math.sin(pitch / 2);
-  const s2 = Math.sin(yaw / 2);
-  const s3 = Math.sin(roll / 2);
-
-  return normalizeQuaternion({
-    x: s1 * c2 * c3 + c1 * s2 * s3,
-    y: c1 * s2 * c3 - s1 * c2 * s3,
-    z: c1 * c2 * s3 - s1 * s2 * c3,
-    w: c1 * c2 * c3 + s1 * s2 * s3,
-  });
-};
-
-const rotateVectorByQuaternion = (vector: Vec3_t, quaternion: Quaternion_t): Vec3_t => {
-  const u = { x: quaternion.x, y: quaternion.y, z: quaternion.z };
-  const s = quaternion.w;
-  const dotUV = u.x * vector.x + u.y * vector.y + u.z * vector.z;
-  const dotUU = u.x * u.x + u.y * u.y + u.z * u.z;
-
-  const cross = {
-    x: u.y * vector.z - u.z * vector.y,
-    y: u.z * vector.x - u.x * vector.z,
-    z: u.x * vector.y - u.y * vector.x,
-  };
-
-  return {
-    x: 2 * dotUV * u.x + (s * s - dotUU) * vector.x + 2 * s * cross.x,
-    y: 2 * dotUV * u.y + (s * s - dotUU) * vector.y + 2 * s * cross.y,
-    z: 2 * dotUV * u.z + (s * s - dotUU) * vector.z + 2 * s * cross.z,
-  };
-};
-
-const randomSpawnPosition = (): Vec3_t => {
-  return {
-    x: Math.floor(Math.random() * (worldHalfExtent * 2 + 1)) - worldHalfExtent,
-    y: Math.floor(Math.random() * (worldHalfExtent * 2 + 1)) - worldHalfExtent,
-    z: Math.floor(Math.random() * (worldHalfExtent * 2 + 1)) - worldHalfExtent,
-  };
-};
-
-const getPlayerOrientation = (playerId: PlayerId_t, state: PlayerState_t): Quaternion_t => {
-  if (state.orientation) {
-    return state.orientation;
-  }
-
-  const orientation = orientationByPlayerId.get(playerId);
-  if (orientation) {
-    return orientation;
-  }
-
-  const computed = quaternionFromEulerYXZ(state.pitch, state.yaw, state.roll);
-  orientationByPlayerId.set(playerId, computed);
-  return computed;
-};
-
-const getForwardVector = (playerId: PlayerId_t, state: PlayerState_t): Vec3_t => {
-  const orientation = getPlayerOrientation(playerId, state);
-  return rotateVectorByQuaternion({ x: 0, y: 0, z: -1 }, orientation);
-};
-
-const getRightVector = (playerId: PlayerId_t, state: PlayerState_t): Vec3_t => {
-  const orientation = getPlayerOrientation(playerId, state);
-  return rotateVectorByQuaternion({ x: 1, y: 0, z: 0 }, orientation);
-};
-
-const vectorLength = (vector: Vec3_t): number => {
-  return Math.sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
-};
-
-const normalizeVector = (vector: Vec3_t): Vec3_t => {
-  const length = vectorLength(vector);
-  if (length <= 0.00001) {
-    return { x: 0, y: 0, z: -1 };
-  }
-
-  return {
-    x: vector.x / length,
-    y: vector.y / length,
-    z: vector.z / length,
-  };
-};
-
-const mixDirections = (a: Vec3_t, b: Vec3_t, lerp: number): Vec3_t => {
-  const t = clamp(lerp, 0, 1);
-  return {
-    x: a.x * (1 - t) + b.x * t,
-    y: a.y * (1 - t) + b.y * t,
-    z: a.z * (1 - t) + b.z * t,
-  };
-};
-
-const spawnExplosion = (roomId: RoomId_t, position: Vec3_t): void => {
-  const id = randomUUID().slice(0, 12);
-  explosions.set(id, {
-    id,
-    roomId,
-    position: { ...position },
-    life: 1,
-    ticksLeft: explosionLifetimeTicks,
-    maxTicks: explosionLifetimeTicks,
-  });
-};
-
-const scheduleRespawn = (playerId: PlayerId_t): void => {
-  const existing = respawnTimerByPlayer.get(playerId);
-  if (existing) {
-    clearTimeout(existing);
-  }
-
-  const timer = setTimeout(() => {
-    respawnTimerByPlayer.delete(playerId);
-
-    const state = players.get(playerId);
-    if (!state) {
-      return;
-    }
-
-    if (!playerRoomById.get(playerId)) {
-      return;
-    }
-
-    state.isAlive = true;
-    state.health = maxHealth;
-    state.projectileAmmo = initialProjectileAmmo;
-    state.missileAmmo = initialMissileAmmo;
-    state.position = randomSpawnPosition();
-  }, respawnDelayMs);
-
-  respawnTimerByPlayer.set(playerId, timer);
-};
-
-const handleProjectileHit = (projectile: Projectile_t, target: PlayerState_t): void => {
-  target.health = clamp(target.health - projectileDamage, 0, maxHealth);
-  if (target.health <= 0) {
-    handlePlayerDestroyed(projectile.roomId, target);
-  }
-};
-
-const handlePlayerDestroyed = (roomId: RoomId_t, target: PlayerState_t): void => {
-  target.health = 0;
-  target.isAlive = false;
-  inputs.set(target.id, { forward: 0, strafe: 0 });
-  spawnExplosion(roomId, target.position);
-  scheduleRespawn(target.id);
-};
-
-const tickSimulation = (): void => {
-  for (const [playerId, state] of players.entries()) {
-    const roomId = playerRoomById.get(playerId);
-    if (!roomId || !state.isAlive) {
-      continue;
-    }
-
-    const input = inputs.get(playerId) ?? { forward: 0, strafe: 0 };
-    if (input.forward === 0 && input.strafe === 0) {
-      continue;
-    }
-
-    const forward = getForwardVector(playerId, state);
-    const right = getRightVector(playerId, state);
-
-    state.position.x = clampAxis(state.position.x + (forward.x * input.forward + right.x * input.strafe) * moveSpeed);
-    state.position.y = clampAxis(state.position.y + (forward.y * input.forward + right.y * input.strafe) * moveSpeed);
-    state.position.z = clampAxis(state.position.z + (forward.z * input.forward + right.z * input.strafe) * moveSpeed);
-  }
-
-  for (const [projectileId, projectile] of projectiles.entries()) {
-    projectile.position.x += projectile.velocity.x * projectileSpeed;
-    projectile.position.y += projectile.velocity.y * projectileSpeed;
-    projectile.position.z += projectile.velocity.z * projectileSpeed;
-    projectile.ticksLeft -= 1;
-
-    const outOfBounds =
-      Math.abs(projectile.position.x) > worldHalfExtent ||
-      Math.abs(projectile.position.y) > worldHalfExtent ||
-      Math.abs(projectile.position.z) > worldHalfExtent;
-
-    if (projectile.ticksLeft <= 0 || outOfBounds) {
-      projectiles.delete(projectileId);
-      continue;
-    }
-
-    let didHit = false;
-    for (const player of players.values()) {
-      if (!player.isAlive || player.id === projectile.ownerId) {
-        continue;
-      }
-
-      if (playerRoomById.get(player.id) !== projectile.roomId) {
-        continue;
-      }
-
-      const dx = player.position.x - projectile.position.x;
-      const dy = player.position.y - projectile.position.y;
-      const dz = player.position.z - projectile.position.z;
-      if (dx * dx + dy * dy + dz * dz > hitRadius * hitRadius) {
-        continue;
-      }
-
-      handleProjectileHit(projectile, player);
-      projectiles.delete(projectileId);
-      didHit = true;
-      break;
-    }
-
-    if (didHit) {
-      continue;
-    }
-
-    for (const supplyCube of supplyCubes.values()) {
-      if (supplyCube.roomId !== projectile.roomId) {
-        continue;
-      }
-
-      const dx = supplyCube.position.x - projectile.position.x;
-      const dy = supplyCube.position.y - projectile.position.y;
-      const dz = supplyCube.position.z - projectile.position.z;
-      if (dx * dx + dy * dy + dz * dz > supplyCubeHitRadius * supplyCubeHitRadius) {
-        continue;
-      }
-
-      spawnExplosion(projectile.roomId, supplyCube.position);
-      supplyCube.position = randomSpawnPosition();
-      projectiles.delete(projectileId);
-      didHit = true;
-      break;
-    }
-
-    if (didHit) {
-      continue;
-    }
-  }
-
-  for (const [missileId, missile] of missiles.entries()) {
-    missile.ticksLeft -= 1;
-    if (missile.ticksLeft <= 0) {
-      missiles.delete(missileId);
-      continue;
-    }
-
-    const target = players.get(missile.targetId);
-    let direction = normalizeVector(missile.velocity);
-    if (!missile.lostTarget) {
-      if (target && target.isAlive && playerRoomById.get(target.id) === missile.roomId) {
-        const desiredDirection = normalizeVector({
-          x: target.position.x - missile.position.x,
-          y: target.position.y - missile.position.y,
-          z: target.position.z - missile.position.z,
-        });
-        direction = normalizeVector(mixDirections(direction, desiredDirection, missileTurnLerp));
-        missile.velocity = direction;
-      } else {
-        missile.lostTarget = true;
-      }
-    }
-
-    missile.position.x += direction.x * missileSpeed;
-    missile.position.y += direction.y * missileSpeed;
-    missile.position.z += direction.z * missileSpeed;
-
-    const outOfBounds =
-      Math.abs(missile.position.x) > worldHalfExtent ||
-      Math.abs(missile.position.y) > worldHalfExtent ||
-      Math.abs(missile.position.z) > worldHalfExtent;
-    if (outOfBounds) {
-      missiles.delete(missileId);
-      continue;
-    }
-
-    let exploded = false;
-    for (const player of players.values()) {
-      if (!player.isAlive) {
-        continue;
-      }
-
-      if (playerRoomById.get(player.id) !== missile.roomId) {
-        continue;
-      }
-
-      const dx = player.position.x - missile.position.x;
-      const dy = player.position.y - missile.position.y;
-      const dz = player.position.z - missile.position.z;
-      if (dx * dx + dy * dy + dz * dz > missileHitRadius * missileHitRadius) {
-        continue;
-      }
-
-      player.health = clamp(player.health - missileDamage, 0, maxHealth);
-      if (player.health <= 0) {
-        handlePlayerDestroyed(missile.roomId, player);
-      }
-      missiles.delete(missileId);
-      exploded = true;
-      break;
-    }
-
-    if (exploded) {
-      continue;
-    }
-
-    for (const [projectileId, projectile] of projectiles.entries()) {
-      if (projectile.roomId !== missile.roomId) {
-        continue;
-      }
-
-      const dx = projectile.position.x - missile.position.x;
-      const dy = projectile.position.y - missile.position.y;
-      const dz = projectile.position.z - missile.position.z;
-      if (dx * dx + dy * dy + dz * dz > missileHitRadius * missileHitRadius) {
-        continue;
-      }
-
-      spawnExplosion(missile.roomId, missile.position);
-      projectiles.delete(projectileId);
-      missiles.delete(missileId);
-      exploded = true;
-      break;
-    }
-
-    if (exploded) {
-      continue;
-    }
-
-    for (const supplyCube of supplyCubes.values()) {
-      if (supplyCube.roomId !== missile.roomId) {
-        continue;
-      }
-
-      const dx = supplyCube.position.x - missile.position.x;
-      const dy = supplyCube.position.y - missile.position.y;
-      const dz = supplyCube.position.z - missile.position.z;
-      if (dx * dx + dy * dy + dz * dz > supplyCubeHitRadius * supplyCubeHitRadius) {
-        continue;
-      }
-
-      spawnExplosion(missile.roomId, supplyCube.position);
-      supplyCube.position = randomSpawnPosition();
-      missiles.delete(missileId);
-      exploded = true;
-      break;
-    }
-
-    if (exploded) {
-      continue;
-    }
-  }
-
-  for (const [explosionId, explosion] of explosions.entries()) {
-    explosion.ticksLeft -= 1;
-    explosion.life = clamp(explosion.ticksLeft / explosion.maxTicks, 0, 1);
-    if (explosion.ticksLeft <= 0) {
-      explosions.delete(explosionId);
-    }
-  }
-
-  for (const supplyCube of supplyCubes.values()) {
-    for (const player of players.values()) {
-      if (!player.isAlive) {
-        continue;
-      }
-
-      if (playerRoomById.get(player.id) !== supplyCube.roomId) {
-        continue;
-      }
-
-      const dx = player.position.x - supplyCube.position.x;
-      const dy = player.position.y - supplyCube.position.y;
-      const dz = player.position.z - supplyCube.position.z;
-      if (dx * dx + dy * dy + dz * dz > supplyCubePickupRadius * supplyCubePickupRadius) {
-        continue;
-      }
-
-      if (supplyCube.cubeType === "health") {
-        player.health = maxHealth;
-      } else if (supplyCube.cubeType === "projectile_ammo") {
-        player.projectileAmmo = initialProjectileAmmo;
-      } else {
-        player.missileAmmo = initialMissileAmmo;
-      }
-      supplyCube.position = randomSpawnPosition();
-      break;
-    }
-  }
-};
-
-wss.on("connection", (socket) => {
-  const playerId = randomUUID();
-
-  const playerState: PlayerState_t = {
+const createPlayerState = (playerId: PlayerId_t): PlayerState_t => {
+  const state: PlayerState_t = {
     id: playerId,
-    position: randomSpawnPosition(),
+    position: randomSpawn(),
     yaw: 0,
     pitch: 0,
     roll: 0,
@@ -738,10 +163,16 @@ wss.on("connection", (socket) => {
     isAlive: true,
     color: `hsl(${Math.floor(Math.random() * 360)} 80% 55%)`,
   };
+  state.orientation = quaternionFromEulerYXZ(state.pitch, state.yaw, state.roll);
+  return state;
+};
 
-  playerState.orientation = quaternionFromEulerYXZ(playerState.pitch, playerState.yaw, playerState.roll);
+wss.on("connection", (socket) => {
+  const playerId = randomUUID();
+
+  const playerState = createPlayerState(playerId);
   players.set(playerId, playerState);
-  orientationByPlayerId.set(playerId, quaternionFromEulerYXZ(playerState.pitch, playerState.yaw, playerState.roll));
+  orientationByPlayerId.set(playerId, playerState.orientation);
   clients.set(playerId, { playerId, socket });
   inputs.set(playerId, { forward: 0, strafe: 0 });
   playerRoomById.set(playerId, null);
@@ -801,7 +232,7 @@ wss.on("connection", (socket) => {
         return;
       }
 
-      const forward = getForwardVector(playerId, state);
+      const forward = getForwardVector(playerId, state, orientationByPlayerId);
       const projectileId = randomUUID().slice(0, 12);
 
       projectiles.set(projectileId, {
@@ -843,7 +274,7 @@ wss.on("connection", (socket) => {
         return;
       }
 
-      const forward = getForwardVector(playerId, state);
+      const forward = getForwardVector(playerId, state, orientationByPlayerId);
       const missileId = randomUUID().slice(0, 12);
       missiles.set(missileId, {
         id: missileId,
@@ -866,13 +297,20 @@ wss.on("connection", (socket) => {
     }
 
     if (message.type === "create_room") {
-      createRoom(playerId, message.roomName);
+      createRoom({
+        creatorId: playerId,
+        roomNameRaw: message.roomName,
+        state: roomState,
+        supplyCubesPerRoom,
+        supplyCubeTypes,
+        randomSpawnPosition: randomSpawn,
+      });
       broadcastWorld();
       return;
     }
 
     if (message.type === "join_room") {
-      const ok = joinRoom(playerId, message.roomId);
+      const ok = joinRoom(playerId, message.roomId, roomState);
       if (!ok) {
         send(socket, { type: "error", message: "Room not found" });
         sendWorldToPlayer(playerId);
@@ -899,7 +337,7 @@ wss.on("connection", (socket) => {
       respawnTimerByPlayer.delete(playerId);
     }
 
-    leaveCurrentRoom(playerId);
+    leaveCurrentRoom(playerId, roomState);
     playerRoomById.delete(playerId);
     inputs.delete(playerId);
     orientationByPlayerId.delete(playerId);
@@ -912,7 +350,7 @@ wss.on("connection", (socket) => {
 });
 
 setInterval(() => {
-  tickSimulation();
+  tickSimulation(simulationState, simulationSettings);
   broadcastWorld();
 }, 1000 / tickRateHz);
 
