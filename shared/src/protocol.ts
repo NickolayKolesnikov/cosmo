@@ -23,6 +23,9 @@ export type PlayerState_t = {
   pitch: number;
   roll: number;
   orientation: Quaternion_t;
+  health: number;
+  projectileAmmo: number;
+  missileAmmo: number;
   isAlive: boolean;
   color: string;
 };

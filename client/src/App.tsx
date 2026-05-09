@@ -637,6 +637,11 @@ export function App() {
     });
   };
 
+  const selfPlayer = world.players.find((player) => player.id === playerId);
+  const selfHealth = selfPlayer?.health ?? 100;
+  const selfMissileAmmo = selfPlayer?.missileAmmo ?? 5;
+  const selfProjectileAmmo = selfPlayer?.projectileAmmo ?? 100;
+
   return (
     <main className="page">
       <h1>Cosmos Multiplayer</h1>
@@ -706,6 +711,11 @@ export function App() {
           }}
         >
           <div className={`crosshair ${isCrosshairHot ? "hot" : ""}`} aria-hidden="true" />
+          <div className="hud-stats" aria-hidden="true">
+            <div className="hud-stat-line">HP {Math.round(selfHealth)}</div>
+            <div className="hud-stat-line">Rockets {selfMissileAmmo}</div>
+            <div className="hud-stat-line">Shells {selfProjectileAmmo}</div>
+          </div>
         </div>
       </section>
     </main>

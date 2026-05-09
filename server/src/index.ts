@@ -34,6 +34,11 @@ const moveSpeed = 2.8;
 const worldHalfExtent = WORLD_HALF_EXTENT;
 const projectileSpeed = 8.5;
 const projectileLifetimeTicks = tickRateHz * 4;
+const maxHealth = 100;
+const projectileDamage = 10;
+const missileDamage = 100;
+const initialProjectileAmmo = 100;
+const initialMissileAmmo = 5;
 const missileSpeed = 5.2;
 const missileLifetimeTicks = tickRateHz * 6;
 const missileTurnLerp = 0.18;
@@ -64,6 +69,7 @@ type Explosion_t = ExplosionState_t & {
 type Missile_t = MissileState_t & {
   roomId: RoomId_t;
   ticksLeft: number;
+  lostTarget: boolean;
 };
 
 const httpServer = createServer((_, res) => {
@@ -411,6 +417,9 @@ const scheduleRespawn = (playerId: PlayerId_t): void => {
     }
 
     state.isAlive = true;
+    state.health = maxHealth;
+    state.projectileAmmo = initialProjectileAmmo;
+    state.missileAmmo = initialMissileAmmo;
     state.position = randomSpawnPosition();
   }, respawnDelayMs);
 
@@ -418,13 +427,14 @@ const scheduleRespawn = (playerId: PlayerId_t): void => {
 };
 
 const handleProjectileHit = (projectile: Projectile_t, target: PlayerState_t): void => {
-  target.isAlive = false;
-  inputs.set(target.id, { forward: 0, strafe: 0 });
-  spawnExplosion(projectile.roomId, target.position);
-  scheduleRespawn(target.id);
+  target.health = clamp(target.health - projectileDamage, 0, maxHealth);
+  if (target.health <= 0) {
+    handlePlayerDestroyed(projectile.roomId, target);
+  }
 };
 
 const handlePlayerDestroyed = (roomId: RoomId_t, target: PlayerState_t): void => {
+  target.health = 0;
   target.isAlive = false;
   inputs.set(target.id, { forward: 0, strafe: 0 });
   spawnExplosion(roomId, target.position);
@@ -504,14 +514,18 @@ const tickSimulation = (): void => {
 
     const target = players.get(missile.targetId);
     let direction = normalizeVector(missile.velocity);
-    if (target && target.isAlive && playerRoomById.get(target.id) === missile.roomId) {
-      const desiredDirection = normalizeVector({
-        x: target.position.x - missile.position.x,
-        y: target.position.y - missile.position.y,
-        z: target.position.z - missile.position.z,
-      });
-      direction = normalizeVector(mixDirections(direction, desiredDirection, missileTurnLerp));
-      missile.velocity = direction;
+    if (!missile.lostTarget) {
+      if (target && target.isAlive && playerRoomById.get(target.id) === missile.roomId) {
+        const desiredDirection = normalizeVector({
+          x: target.position.x - missile.position.x,
+          y: target.position.y - missile.position.y,
+          z: target.position.z - missile.position.z,
+        });
+        direction = normalizeVector(mixDirections(direction, desiredDirection, missileTurnLerp));
+        missile.velocity = direction;
+      } else {
+        missile.lostTarget = true;
+      }
     }
 
     missile.position.x += direction.x * missileSpeed;
@@ -544,7 +558,10 @@ const tickSimulation = (): void => {
         continue;
       }
 
-      handlePlayerDestroyed(missile.roomId, player);
+      player.health = clamp(player.health - missileDamage, 0, maxHealth);
+      if (player.health <= 0) {
+        handlePlayerDestroyed(missile.roomId, player);
+      }
       missiles.delete(missileId);
       exploded = true;
       break;
@@ -597,6 +614,9 @@ wss.on("connection", (socket) => {
     pitch: 0,
     roll: 0,
     orientation: { x: 0, y: 0, z: 0, w: 1 },
+    health: maxHealth,
+    projectileAmmo: initialProjectileAmmo,
+    missileAmmo: initialMissileAmmo,
     isAlive: true,
     color: `hsl(${Math.floor(Math.random() * 360)} 80% 55%)`,
   };
@@ -653,6 +673,10 @@ wss.on("connection", (socket) => {
         return;
       }
 
+      if (state.projectileAmmo <= 0) {
+        return;
+      }
+
       const nowMs = Date.now();
       const lastShotAtMs = lastShotAtMsByPlayer.get(playerId) ?? 0;
       if (nowMs - lastShotAtMs < shootCooldownMs) {
@@ -675,6 +699,7 @@ wss.on("connection", (socket) => {
         ticksLeft: projectileLifetimeTicks,
       });
 
+      state.projectileAmmo -= 1;
       lastShotAtMsByPlayer.set(playerId, nowMs);
       return;
     }
@@ -682,6 +707,10 @@ wss.on("connection", (socket) => {
     if (message.type === "launch_homing") {
       const roomId = playerRoomById.get(playerId);
       if (!roomId || !state.isAlive) {
+        return;
+      }
+
+      if (state.missileAmmo <= 0) {
         return;
       }
 
@@ -710,8 +739,10 @@ wss.on("connection", (socket) => {
         },
         velocity: normalizeVector(forward),
         ticksLeft: missileLifetimeTicks,
+        lostTarget: false,
       });
 
+      state.missileAmmo -= 1;
       lastHomingAtMsByPlayer.set(playerId, nowMs);
       return;
     }
