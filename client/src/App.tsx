@@ -208,6 +208,14 @@ type RadarResourceContact_t = {
   isAbove: boolean;
 };
 
+type RadarMissileContact_t = {
+  id: string;
+  xPx: number;
+  yPx: number;
+  altitudePx: number;
+  isAbove: boolean;
+};
+
 const getRadarResourceClassName = (cubeType: SupplyCubeType_t): string => {
   if (cubeType === "projectile_ammo") {
     return "radar-resource-projectile";
@@ -1092,9 +1100,49 @@ export function App() {
   const selfMissileAmmo = selfPlayer?.missileAmmo ?? 5;
   const selfProjectileAmmo = selfPlayer?.projectileAmmo ?? 100;
   const isSelfDestroyed = Boolean(selfPlayer && !selfPlayer.isAlive);
+  const hasIncomingMissileLock = Boolean(selfPlayer && world.missiles.some((missile) => missile.targetId === selfPlayer.id));
+  const isCrosshairLockedByEnemy = (() => {
+    if (!selfPlayer || !selfPlayer.isAlive) {
+      return false;
+    }
+
+    const selfPosition = new Vector3(selfPlayer.position.x, selfPlayer.position.y, selfPlayer.position.z);
+    const forwardBasis = new Vector3(0, 0, -1);
+    for (const enemy of world.players) {
+      if (enemy.id === selfPlayer.id || !enemy.isAlive) {
+        continue;
+      }
+
+      const enemyToSelf = new Vector3(
+        selfPosition.x - enemy.position.x,
+        selfPosition.y - enemy.position.y,
+        selfPosition.z - enemy.position.z
+      );
+      const distanceSq = enemyToSelf.lengthSq();
+      if (distanceSq <= 0.0001) {
+        continue;
+      }
+
+      const enemyForward = new Vector3(forwardBasis.x, forwardBasis.y, forwardBasis.z)
+        .applyQuaternion(
+          new Quaternion(enemy.orientation.x, enemy.orientation.y, enemy.orientation.z, enemy.orientation.w)
+        )
+        .normalize();
+      enemyToSelf.normalize();
+
+      // Treat a tight angular cone around enemy forward as "crosshair lock".
+      const alignment = enemyForward.dot(enemyToSelf);
+      if (alignment >= 0.992) {
+        return true;
+      }
+    }
+
+    return false;
+  })();
 
   const radarContacts: RadarContact_t[] = [];
   const radarResourceContacts: RadarResourceContact_t[] = [];
+  const radarMissileContacts: RadarMissileContact_t[] = [];
   if (selfPlayer) {
     const selfQuaternion = new Quaternion(
       selfPlayer.orientation.x,
@@ -1157,6 +1205,25 @@ export function App() {
         xPx: projected.xPx,
         yPx: projected.yPx,
         cubeType: supplyCube.cubeType,
+        altitudePx,
+        isAbove: altitude > 0,
+      });
+    }
+
+    for (const missile of world.missiles) {
+      const toMissile = new Vector3(
+        missile.position.x - selfPlayer.position.x,
+        missile.position.y - selfPlayer.position.y,
+        missile.position.z - selfPlayer.position.z
+      );
+      const projected = projectToRadar(toMissile);
+      const altitude = toMissile.dot(planeNormal);
+      const altitudePx = Math.min(radarMaxAltitudePx, Math.abs(altitude) * (radarMaxAltitudePx / radarRange));
+
+      radarMissileContacts.push({
+        id: missile.id,
+        xPx: projected.xPx,
+        yPx: projected.yPx,
         altitudePx,
         isAbove: altitude > 0,
       });
@@ -1235,6 +1302,10 @@ export function App() {
           <div className={`crosshair ${isCrosshairHot ? "hot" : ""}`} aria-hidden="true" />
           {isSelfDestroyed ? <div className="death-overlay" aria-hidden="true" /> : null}
           {damageFlashId > 0 ? <div key={damageFlashId} className="damage-flash-overlay" aria-hidden="true" /> : null}
+          <div className="lock-indicators" aria-live="polite">
+            {isCrosshairLockedByEnemy ? <div className="lock-indicator lock-indicator-aim">AIM LOCK</div> : null}
+            {hasIncomingMissileLock ? <div className="lock-indicator lock-indicator-missile">MISSILE LOCK</div> : null}
+          </div>
           <div className="radar" aria-hidden="true">
             <div className="radar-forward-marker" />
             <div className="radar-ring radar-ring-inner" />
@@ -1259,6 +1330,28 @@ export function App() {
                         resource.isAbove ? "radar-resource-altitude-up" : "radar-resource-altitude-down"
                       } ${getRadarResourceClassName(resource.cubeType)}`}
                       style={{ height: `${resource.altitudePx}px` }}
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+            {radarMissileContacts.map((missile) => {
+              return (
+                <div
+                  key={missile.id}
+                  className="radar-missile-contact"
+                  style={{
+                    left: `${radarRadiusPx + missile.xPx}px`,
+                    top: `${radarRadiusPx - missile.yPx}px`,
+                  }}
+                >
+                  <div className="radar-missile-dot" />
+                  {missile.altitudePx >= radarHeightEpsilon ? (
+                    <div
+                      className={`radar-missile-altitude ${
+                        missile.isAbove ? "radar-missile-altitude-up" : "radar-missile-altitude-down"
+                      }`}
+                      style={{ height: `${missile.altitudePx}px` }}
                     />
                   ) : null}
                 </div>
