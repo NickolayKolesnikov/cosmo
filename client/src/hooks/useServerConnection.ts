@@ -13,6 +13,7 @@ const initialWorldState: WorldState_t = {
   missiles: [],
   explosions: [],
   supplyCubes: [],
+  transports: [],
   serverTimeMs: 0,
 };
 

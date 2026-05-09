@@ -1,5 +1,5 @@
 import { useEffect, useState, type MutableRefObject } from "react";
-import type { ClientMessage_t, WorldState_t } from "@cosmos/shared";
+import type { ClientMessage_t, MissileTarget_t, WorldState_t } from "@cosmos/shared";
 import { Quaternion, Vector3 } from "three";
 
 const mouseSensitivity = 0.0022;
@@ -13,13 +13,22 @@ type KeyState_t = {
   e: boolean;
 };
 
+const codeToKeyStateField: Partial<Record<string, keyof KeyState_t>> = {
+  KeyW: "w",
+  KeyA: "a",
+  KeyS: "s",
+  KeyD: "d",
+  KeyQ: "q",
+  KeyE: "e",
+};
+
 type UsePlayerControlsArgs_t = {
   worldRef: MutableRefObject<WorldState_t>;
   keyStateRef: MutableRefObject<KeyState_t>;
   getPointerLockTarget: () => HTMLElement | null;
   sendMessage: (payload: ClientMessage_t) => boolean;
   ensureAudioContext: () => AudioContext | null;
-  hoveredTargetIdRef: MutableRefObject<string | null>;
+  hoveredTargetRef: MutableRefObject<MissileTarget_t | null>;
   isCrosshairHotRef: MutableRefObject<boolean>;
   orientationRef: MutableRefObject<Quaternion>;
   qYawRef: MutableRefObject<Quaternion>;
@@ -36,7 +45,7 @@ export const usePlayerControls = ({
   getPointerLockTarget,
   sendMessage,
   ensureAudioContext,
-  hoveredTargetIdRef,
+  hoveredTargetRef,
   isCrosshairHotRef,
   orientationRef,
   qYawRef,
@@ -110,14 +119,15 @@ export const usePlayerControls = ({
         return;
       }
 
-      const targetId = hoveredTargetIdRef.current;
-      if (!targetId || !isCrosshairHotRef.current) {
+      const target = hoveredTargetRef.current;
+      if (!target || !isCrosshairHotRef.current) {
         return;
       }
 
       sendMessage({
         type: "launch_homing",
-        targetId,
+        targetId: target.targetId,
+        targetKind: target.targetKind,
       });
     };
 
@@ -133,7 +143,7 @@ export const usePlayerControls = ({
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("contextmenu", onContextMenu);
     };
-  }, [ensureAudioContext, hoveredTargetIdRef, isCrosshairHotRef, isPointerLocked, sendMessage, worldRef]);
+  }, [ensureAudioContext, hoveredTargetRef, isCrosshairHotRef, isPointerLocked, sendMessage, worldRef]);
 
   useEffect(() => {
     const sendInput = () => {
@@ -162,24 +172,24 @@ export const usePlayerControls = ({
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if (!["w", "a", "s", "d", "q", "e"].includes(key)) {
+      const mappedKey = codeToKeyStateField[event.code];
+      if (!mappedKey) {
         return;
       }
 
       event.preventDefault();
-      keyStateRef.current[key as keyof KeyState_t] = true;
+      keyStateRef.current[mappedKey] = true;
       sendInput();
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if (!["w", "a", "s", "d", "q", "e"].includes(key)) {
+      const mappedKey = codeToKeyStateField[event.code];
+      if (!mappedKey) {
         return;
       }
 
       event.preventDefault();
-      keyStateRef.current[key as keyof KeyState_t] = false;
+      keyStateRef.current[mappedKey] = false;
       sendInput();
     };
 

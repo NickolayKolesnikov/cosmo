@@ -397,6 +397,39 @@ button:disabled {
   top: 0;
 }
 
+.radar-transport-contact {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.radar-transport-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: rgba(132, 206, 255, 0.46);
+  box-shadow: 0 0 4px rgba(92, 185, 255, 0.24);
+}
+
+.radar-transport-altitude {
+  position: absolute;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: rgba(132, 206, 255, 0.4);
+  box-shadow: 0 0 3px rgba(92, 185, 255, 0.2);
+}
+
+.radar-transport-altitude-up {
+  bottom: 0;
+}
+
+.radar-transport-altitude-down {
+  top: 0;
+}
+
 .radar-contact {
   position: absolute;
   width: 0;

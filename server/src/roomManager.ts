@@ -4,7 +4,14 @@ import type {
   RoomId_t,
   SupplyCubeType_t,
 } from "@cosmos/shared";
-import { spawnSupplyCubesForRoom, type Explosion_t, type Missile_t, type Projectile_t, type SupplyCube_t } from "./simulation.js";
+import {
+  spawnSupplyCubesForRoom,
+  type Explosion_t,
+  type Missile_t,
+  type Projectile_t,
+  type SupplyCube_t,
+  type Transport_t,
+} from "./simulation.js";
 
 export type Room_t = {
   id: RoomId_t;
@@ -19,6 +26,7 @@ export type RoomManagerState_t = {
   missiles: Map<string, Missile_t>;
   explosions: Map<string, Explosion_t>;
   supplyCubes: Map<string, SupplyCube_t>;
+  transports: Map<string, Transport_t>;
 };
 
 export const leaveCurrentRoom = (playerId: PlayerId_t, state: RoomManagerState_t): void => {
@@ -37,7 +45,7 @@ export const leaveCurrentRoom = (playerId: PlayerId_t, state: RoomManagerState_t
   state.playerRoomById.set(playerId, null);
 
   for (const [projectileId, projectile] of state.projectiles.entries()) {
-    if (projectile.ownerId === playerId) {
+    if (projectile.ownerKind === "player" && projectile.ownerId === playerId) {
       state.projectiles.delete(projectileId);
     }
   }
@@ -64,6 +72,12 @@ export const leaveCurrentRoom = (playerId: PlayerId_t, state: RoomManagerState_t
     for (const [supplyCubeId, supplyCube] of state.supplyCubes.entries()) {
       if (supplyCube.roomId === roomId) {
         state.supplyCubes.delete(supplyCubeId);
+      }
+    }
+
+    for (const [transportId, transport] of state.transports.entries()) {
+      if (transport.roomId === roomId) {
+        state.transports.delete(transportId);
       }
     }
 

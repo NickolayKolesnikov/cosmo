@@ -10,6 +10,7 @@ import type {
   RoomSummary_t,
   SupplyCubeState_t,
   SupplyCubeType_t,
+  TransportState_t,
   Vec3_t,
   WorldState_t,
 } from "@cosmos/shared";
@@ -49,6 +50,12 @@ export type SupplyCube_t = SupplyCubeState_t & {
   roomId: RoomId_t;
 };
 
+export type Transport_t = TransportState_t & {
+  roomId: RoomId_t;
+  attackerPlayerIds: Set<PlayerId_t>;
+  lastAttackShotAtMs: number;
+};
+
 export type SimulationState_t = {
   players: Map<PlayerId_t, PlayerState_t>;
   orientationByPlayerId: Map<PlayerId_t, Quaternion_t>;
@@ -58,6 +65,7 @@ export type SimulationState_t = {
   missiles: Map<string, Missile_t>;
   explosions: Map<string, Explosion_t>;
   supplyCubes: Map<string, SupplyCube_t>;
+  transports: Map<string, Transport_t>;
   respawnTimerByPlayer: Map<PlayerId_t, ReturnType<typeof setTimeout>>;
 };
 
@@ -68,6 +76,7 @@ export type WorldBuildState_t = {
   missiles: Map<string, Missile_t>;
   explosions: Map<string, Explosion_t>;
   supplyCubes: Map<string, SupplyCube_t>;
+  transports: Map<string, Transport_t>;
 };
 
 export type SimulationSettings_t = {
@@ -75,10 +84,14 @@ export type SimulationSettings_t = {
   worldHalfExtent: number;
   projectileSpeed: number;
   maxHealth: number;
+  transportInitialHealth: number;
   projectileDamage: number;
   missileDamage: number;
   missileSpeed: number;
   missileTurnLerp: number;
+  transportSpeed: number;
+  playerCollisionRadius: number;
+  transportCollisionRadius: number;
   hitRadius: number;
   missileHitRadius: number;
   supplyCubePickupRadius: number;
@@ -87,6 +100,12 @@ export type SimulationSettings_t = {
   respawnDelayMs: number;
   initialProjectileAmmo: number;
   initialMissileAmmo: number;
+  transportsPerRoom: number;
+  transportAggroRange: number;
+  transportAttackCooldownMs: number;
+  transportProjectileLifetimeTicks: number;
+  projectileSpawnOffset: number;
+  supplyCubeTypes: SupplyCubeType_t[];
 };
 
 export const getRoomSummaries = (rooms: Map<RoomId_t, Room_t>): RoomSummary_t[] => {
@@ -107,6 +126,7 @@ export const buildWorldStateForPlayer = (args: {
   playerId: PlayerId_t;
   state: WorldBuildState_t;
   players: Map<PlayerId_t, PlayerState_t>;
+  transportAggroRange: number;
 }): WorldState_t => {
   const roomId = args.state.playerRoomById.get(args.playerId) ?? null;
   const room = roomId ? args.state.rooms.get(roomId) ?? null : null;
@@ -118,6 +138,7 @@ export const buildWorldStateForPlayer = (args: {
   const roomMissiles: MissileState_t[] = [];
   const roomExplosions: ExplosionState_t[] = [];
   const roomSupplyCubes: SupplyCube_t[] = [];
+  const roomTransports: TransportState_t[] = [];
 
   if (roomId) {
     for (const projectile of args.state.projectiles.values()) {
@@ -125,6 +146,7 @@ export const buildWorldStateForPlayer = (args: {
         roomProjectiles.push({
           id: projectile.id,
           ownerId: projectile.ownerId,
+          ownerKind: projectile.ownerKind,
           position: projectile.position,
           velocity: projectile.velocity,
         });
@@ -137,6 +159,7 @@ export const buildWorldStateForPlayer = (args: {
           id: missile.id,
           ownerId: missile.ownerId,
           targetId: missile.targetId,
+          targetKind: missile.targetKind,
           position: missile.position,
           velocity: missile.velocity,
         });
@@ -158,8 +181,39 @@ export const buildWorldStateForPlayer = (args: {
         roomSupplyCubes.push({
           id: supplyCube.id,
           position: supplyCube.position,
+          velocity: supplyCube.velocity,
           cubeType: supplyCube.cubeType,
+          autoSpawn: supplyCube.autoSpawn,
           roomId: supplyCube.roomId,
+        });
+      }
+    }
+
+    for (const transport of args.state.transports.values()) {
+      if (transport.roomId === roomId) {
+        const isAggroOnPlayer = (() => {
+          if (!transport.attackerPlayerIds.has(args.playerId)) {
+            return false;
+          }
+
+          const player = args.players.get(args.playerId);
+          if (!player || !player.isAlive || args.state.playerRoomById.get(args.playerId) !== transport.roomId) {
+            return false;
+          }
+
+          const dx = player.position.x - transport.position.x;
+          const dy = player.position.y - transport.position.y;
+          const dz = player.position.z - transport.position.z;
+          const distanceSq = dx * dx + dy * dy + dz * dz;
+          return distanceSq <= args.transportAggroRange * args.transportAggroRange;
+        })();
+
+        roomTransports.push({
+          id: transport.id,
+          position: transport.position,
+          velocity: transport.velocity,
+          health: transport.health,
+          isAggroOnPlayer,
         });
       }
     }
@@ -175,8 +229,72 @@ export const buildWorldStateForPlayer = (args: {
     missiles: roomMissiles,
     explosions: roomExplosions,
     supplyCubes: roomSupplyCubes,
+    transports: roomTransports,
     serverTimeMs: Date.now(),
   };
+};
+
+type Damageable_t = {
+  kind: "player" | "transport";
+  id: string;
+  roomId: RoomId_t;
+  position: Vec3_t;
+  health: number;
+  projectileDamage: number;
+  missileDamage: number;
+  collisionRadius: number;
+};
+
+const createRandomTransportForRoom = (roomId: RoomId_t, worldHalfExtent: number, initialHealth: number): Transport_t => {
+  const axis = Math.floor(Math.random() * 3);
+  const sign = Math.random() < 0.5 ? -1 : 1;
+
+  const start: Vec3_t = {
+    x: Math.random() * worldHalfExtent * 2 - worldHalfExtent,
+    y: Math.random() * worldHalfExtent * 2 - worldHalfExtent,
+    z: Math.random() * worldHalfExtent * 2 - worldHalfExtent,
+  };
+  const target: Vec3_t = {
+    x: Math.random() * worldHalfExtent * 2 - worldHalfExtent,
+    y: Math.random() * worldHalfExtent * 2 - worldHalfExtent,
+    z: Math.random() * worldHalfExtent * 2 - worldHalfExtent,
+  };
+
+  if (axis === 0) {
+    start.x = sign * worldHalfExtent;
+    target.x = -sign * worldHalfExtent;
+  } else if (axis === 1) {
+    start.y = sign * worldHalfExtent;
+    target.y = -sign * worldHalfExtent;
+  } else {
+    start.z = sign * worldHalfExtent;
+    target.z = -sign * worldHalfExtent;
+  }
+
+  return {
+    id: randomUUID().slice(0, 12),
+    roomId,
+    position: start,
+    velocity: normalizeVector({
+      x: target.x - start.x,
+      y: target.y - start.y,
+      z: target.z - start.z,
+    }),
+    health: initialHealth,
+    isAggroOnPlayer: false,
+    attackerPlayerIds: new Set<PlayerId_t>(),
+    lastAttackShotAtMs: 0,
+  };
+};
+
+export const spawnTransportForRoom = (args: {
+  roomId: RoomId_t;
+  transports: Map<string, Transport_t>;
+  worldHalfExtent: number;
+  initialHealth: number;
+}): void => {
+  const transport = createRandomTransportForRoom(args.roomId, args.worldHalfExtent, args.initialHealth);
+  args.transports.set(transport.id, transport);
 };
 
 export const spawnSupplyCubesForRoom = (args: {
@@ -192,9 +310,77 @@ export const spawnSupplyCubesForRoom = (args: {
       id,
       roomId: args.roomId,
       position: args.randomSpawnPosition(),
+      velocity: { x: 0, y: 0, z: 0 },
       cubeType: args.supplyCubeTypes[i % args.supplyCubeTypes.length] ?? "projectile_ammo",
+      autoSpawn: true,
     });
   }
+};
+
+const randomInRange = (min: number, max: number): number => {
+  return min + Math.random() * (max - min);
+};
+
+const getRandomSupplyCubeType = (types: SupplyCubeType_t[]): SupplyCubeType_t => {
+  if (types.length === 0) {
+    return "projectile_ammo";
+  }
+
+  const index = Math.floor(Math.random() * types.length);
+  return types[index] ?? "projectile_ammo";
+};
+
+const spawnTransportLoot = (
+  roomId: RoomId_t,
+  center: Vec3_t,
+  state: SimulationState_t,
+  settings: SimulationSettings_t
+): void => {
+  const dropCount = 3 + Math.floor(Math.random() * 5);
+  const minDropRadius = 6;
+  const maxDropRadius = 16;
+  const minScatterSpeed = 0.35;
+  const maxScatterSpeed = 1.05;
+
+  for (let i = 0; i < dropCount; i += 1) {
+    const offset = {
+      x: randomInRange(-1, 1),
+      y: randomInRange(-1, 1),
+      z: randomInRange(-1, 1),
+    };
+    const radius = randomInRange(minDropRadius, maxDropRadius);
+    const scatterDirection = normalizeVector(offset);
+    const scatterSpeed = randomInRange(minScatterSpeed, maxScatterSpeed);
+    const position = {
+      x: clamp(center.x + offset.x * radius, -settings.worldHalfExtent, settings.worldHalfExtent),
+      y: clamp(center.y + offset.y * radius, -settings.worldHalfExtent, settings.worldHalfExtent),
+      z: clamp(center.z + offset.z * radius, -settings.worldHalfExtent, settings.worldHalfExtent),
+    };
+
+    const id = randomUUID().slice(0, 12);
+    state.supplyCubes.set(id, {
+      id,
+      roomId,
+      position,
+      velocity: {
+        x: scatterDirection.x * scatterSpeed,
+        y: scatterDirection.y * scatterSpeed,
+        z: scatterDirection.z * scatterSpeed,
+      },
+      cubeType: getRandomSupplyCubeType(settings.supplyCubeTypes),
+      autoSpawn: false,
+    });
+  }
+};
+
+const handleSupplyCubeConsumed = (supplyCube: SupplyCube_t, state: SimulationState_t, settings: SimulationSettings_t): void => {
+  if (supplyCube.autoSpawn) {
+    supplyCube.position = randomSpawnPosition(settings.worldHalfExtent);
+    supplyCube.velocity = { x: 0, y: 0, z: 0 };
+    return;
+  }
+
+  state.supplyCubes.delete(supplyCube.id);
 };
 
 
@@ -289,15 +475,247 @@ const handlePlayerDestroyed = (
   scheduleRespawn(target.id, state, settings);
 };
 
-const handleProjectileHit = (
-  projectile: Projectile_t,
-  target: PlayerState_t,
+const roomHasActivePlayers = (roomId: RoomId_t, state: SimulationState_t): boolean => {
+  for (const assignedRoomId of state.playerRoomById.values()) {
+    if (assignedRoomId === roomId) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const countTransportsInRoom = (roomId: RoomId_t, state: SimulationState_t): number => {
+  let count = 0;
+  for (const transport of state.transports.values()) {
+    if (transport.roomId === roomId) {
+      count += 1;
+    }
+  }
+
+  return count;
+};
+
+const scheduleTransportRespawn = (roomId: RoomId_t, state: SimulationState_t, settings: SimulationSettings_t): void => {
+  const respawnDelayMs = 1000 + Math.floor(Math.random() * 3000);
+  setTimeout(() => {
+    if (!roomHasActivePlayers(roomId, state)) {
+      return;
+    }
+
+    const currentCount = countTransportsInRoom(roomId, state);
+    if (currentCount >= settings.transportsPerRoom) {
+      return;
+    }
+
+    const nextTransport = createRandomTransportForRoom(roomId, settings.worldHalfExtent, settings.transportInitialHealth);
+    state.transports.set(nextTransport.id, nextTransport);
+  }, respawnDelayMs);
+};
+
+const getDamageablesInRoom = (roomId: RoomId_t, state: SimulationState_t, settings: SimulationSettings_t): Damageable_t[] => {
+  const damageables: Damageable_t[] = [];
+
+  for (const player of state.players.values()) {
+    if (!player.isAlive) {
+      continue;
+    }
+
+    if (state.playerRoomById.get(player.id) !== roomId) {
+      continue;
+    }
+
+    damageables.push({
+      kind: "player",
+      id: player.id,
+      roomId,
+      position: player.position,
+      health: player.health,
+      projectileDamage: settings.projectileDamage,
+      missileDamage: settings.missileDamage,
+      collisionRadius: settings.playerCollisionRadius,
+    });
+  }
+
+  for (const transport of state.transports.values()) {
+    if (transport.roomId !== roomId || transport.health <= 0) {
+      continue;
+    }
+
+    damageables.push({
+      kind: "transport",
+      id: transport.id,
+      roomId,
+      position: transport.position,
+      health: transport.health,
+      projectileDamage: settings.projectileDamage,
+      missileDamage: settings.missileDamage,
+      collisionRadius: settings.transportCollisionRadius,
+    });
+  }
+
+  return damageables;
+};
+
+const getCurrentDamageableHealth = (damageable: Damageable_t, state: SimulationState_t): number => {
+  if (damageable.kind === "player") {
+    const player = state.players.get(damageable.id as PlayerId_t);
+    if (!player || !player.isAlive) {
+      return 0;
+    }
+
+    return player.health;
+  }
+
+  const transport = state.transports.get(damageable.id);
+  if (!transport) {
+    return 0;
+  }
+
+  return transport.health;
+};
+
+const refreshTransportAttackers = (transport: Transport_t, state: SimulationState_t): void => {
+  for (const attackerId of transport.attackerPlayerIds) {
+    const attacker = state.players.get(attackerId);
+    if (!attacker || !attacker.isAlive || state.playerRoomById.get(attackerId) !== transport.roomId) {
+      transport.attackerPlayerIds.delete(attackerId);
+    }
+  }
+};
+
+const getTransportAttackTarget = (
+  transport: Transport_t,
   state: SimulationState_t,
   settings: SimulationSettings_t
+): PlayerState_t | null => {
+  refreshTransportAttackers(transport, state);
+
+  const aggroRangeSq = settings.transportAggroRange * settings.transportAggroRange;
+  let nearestTarget: PlayerState_t | null = null;
+  let nearestDistanceSq = Number.POSITIVE_INFINITY;
+
+  for (const attackerId of transport.attackerPlayerIds) {
+    const attacker = state.players.get(attackerId);
+    if (!attacker || !attacker.isAlive || state.playerRoomById.get(attackerId) !== transport.roomId) {
+      continue;
+    }
+
+    const dx = attacker.position.x - transport.position.x;
+    const dy = attacker.position.y - transport.position.y;
+    const dz = attacker.position.z - transport.position.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+    if (distanceSq > aggroRangeSq || distanceSq >= nearestDistanceSq) {
+      continue;
+    }
+
+    nearestDistanceSq = distanceSq;
+    nearestTarget = attacker;
+  }
+
+  return nearestTarget;
+};
+
+const transportTryShootAtAttackers = (
+  transport: Transport_t,
+  state: SimulationState_t,
+  settings: SimulationSettings_t,
+  nowMs: number
 ): void => {
-  target.health = clamp(target.health - settings.projectileDamage, 0, settings.maxHealth);
-  if (target.health <= 0) {
-    handlePlayerDestroyed(projectile.roomId, target, state, settings);
+  if (nowMs - transport.lastAttackShotAtMs < settings.transportAttackCooldownMs) {
+    return;
+  }
+
+  const target = getTransportAttackTarget(transport, state, settings);
+  if (!target) {
+    return;
+  }
+
+  const direction = normalizeVector({
+    x: target.position.x - transport.position.x,
+    y: target.position.y - transport.position.y,
+    z: target.position.z - transport.position.z,
+  });
+
+  const projectileId = randomUUID().slice(0, 12);
+  state.projectiles.set(projectileId, {
+    id: projectileId,
+    ownerId: transport.id,
+    ownerKind: "transport",
+    roomId: transport.roomId,
+    position: {
+      x: transport.position.x + direction.x * settings.projectileSpawnOffset,
+      y: transport.position.y + direction.y * settings.projectileSpawnOffset,
+      z: transport.position.z + direction.z * settings.projectileSpawnOffset,
+    },
+    velocity: direction,
+    ticksLeft: settings.transportProjectileLifetimeTicks,
+  });
+
+  transport.lastAttackShotAtMs = nowMs;
+};
+
+const getMissileTargetPosition = (missile: Missile_t, state: SimulationState_t): Vec3_t | null => {
+  if (missile.targetKind === "player") {
+    const targetPlayer = state.players.get(missile.targetId as PlayerId_t);
+    if (!targetPlayer || !targetPlayer.isAlive || state.playerRoomById.get(targetPlayer.id) !== missile.roomId) {
+      return null;
+    }
+
+    return targetPlayer.position;
+  }
+
+  const targetTransport = state.transports.get(missile.targetId);
+  if (!targetTransport || targetTransport.roomId !== missile.roomId || targetTransport.health <= 0) {
+    return null;
+  }
+
+  return targetTransport.position;
+};
+
+const applyDamageToDamageable = (
+  damageable: Damageable_t,
+  amount: number,
+  state: SimulationState_t,
+  settings: SimulationSettings_t,
+  attackerPlayerId: PlayerId_t | null = null
+): void => {
+  const damage = Math.max(0, amount);
+  if (damage <= 0) {
+    return;
+  }
+
+  if (damageable.kind === "player") {
+    const player = state.players.get(damageable.id as PlayerId_t);
+    if (!player || !player.isAlive) {
+      return;
+    }
+
+    player.health = clamp(player.health - damage, 0, settings.maxHealth);
+    if (player.health <= 0) {
+      handlePlayerDestroyed(damageable.roomId, player, state, settings);
+    }
+    return;
+  }
+
+  const transport = state.transports.get(damageable.id);
+  if (!transport) {
+    return;
+  }
+
+  if (attackerPlayerId) {
+    const attacker = state.players.get(attackerPlayerId);
+    if (attacker && attacker.isAlive && state.playerRoomById.get(attackerPlayerId) === transport.roomId) {
+      transport.attackerPlayerIds.add(attackerPlayerId);
+    }
+  }
+
+  transport.health = clamp(transport.health - damage, 0, settings.transportInitialHealth);
+  if (transport.health <= 0) {
+    spawnExplosion(transport.roomId, transport.position, state, settings);
+    spawnTransportLoot(transport.roomId, transport.position, state, settings);
+    state.transports.delete(transport.id);
+    scheduleTransportRespawn(transport.roomId, state, settings);
   }
 };
 
@@ -348,23 +766,25 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
     }
 
     let didHit = false;
-    for (const player of state.players.values()) {
-      if (!player.isAlive || player.id === projectile.ownerId) {
+    const projectileDamageables = getDamageablesInRoom(projectile.roomId, state, settings);
+    for (const damageable of projectileDamageables) {
+      if (damageable.kind === projectile.ownerKind && damageable.id === projectile.ownerId) {
         continue;
       }
 
-      if (state.playerRoomById.get(player.id) !== projectile.roomId) {
+      if (getCurrentDamageableHealth(damageable, state) <= 0) {
         continue;
       }
 
-      const dx = player.position.x - projectile.position.x;
-      const dy = player.position.y - projectile.position.y;
-      const dz = player.position.z - projectile.position.z;
+      const dx = damageable.position.x - projectile.position.x;
+      const dy = damageable.position.y - projectile.position.y;
+      const dz = damageable.position.z - projectile.position.z;
       if (dx * dx + dy * dy + dz * dz > settings.hitRadius * settings.hitRadius) {
         continue;
       }
 
-      handleProjectileHit(projectile, player, state, settings);
+      const projectileAttackerId = projectile.ownerKind === "player" ? (projectile.ownerId as PlayerId_t) : null;
+      applyDamageToDamageable(damageable, damageable.projectileDamage, state, settings, projectileAttackerId);
       state.projectiles.delete(projectileId);
       didHit = true;
       break;
@@ -387,7 +807,7 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
       }
 
       spawnExplosion(projectile.roomId, supplyCube.position, state, settings);
-      supplyCube.position = randomSpawnPosition(settings.worldHalfExtent);
+      handleSupplyCubeConsumed(supplyCube, state, settings);
       state.projectiles.delete(projectileId);
       didHit = true;
       break;
@@ -405,14 +825,14 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
       continue;
     }
 
-    const target = state.players.get(missile.targetId);
     let direction = normalizeVector(missile.velocity);
     if (!missile.lostTarget) {
-      if (target && target.isAlive && state.playerRoomById.get(target.id) === missile.roomId) {
+      const targetPosition = getMissileTargetPosition(missile, state);
+      if (targetPosition) {
         const desiredDirection = normalizeVector({
-          x: target.position.x - missile.position.x,
-          y: target.position.y - missile.position.y,
-          z: target.position.z - missile.position.z,
+          x: targetPosition.x - missile.position.x,
+          y: targetPosition.y - missile.position.y,
+          z: targetPosition.z - missile.position.z,
         });
         direction = normalizeVector(mixDirections(direction, desiredDirection, settings.missileTurnLerp));
         missile.velocity = direction;
@@ -435,26 +855,20 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
     }
 
     let exploded = false;
-    for (const player of state.players.values()) {
-      if (!player.isAlive) {
+    const missileDamageables = getDamageablesInRoom(missile.roomId, state, settings);
+    for (const damageable of missileDamageables) {
+      if (getCurrentDamageableHealth(damageable, state) <= 0) {
         continue;
       }
 
-      if (state.playerRoomById.get(player.id) !== missile.roomId) {
-        continue;
-      }
-
-      const dx = player.position.x - missile.position.x;
-      const dy = player.position.y - missile.position.y;
-      const dz = player.position.z - missile.position.z;
+      const dx = damageable.position.x - missile.position.x;
+      const dy = damageable.position.y - missile.position.y;
+      const dz = damageable.position.z - missile.position.z;
       if (dx * dx + dy * dy + dz * dz > settings.missileHitRadius * settings.missileHitRadius) {
         continue;
       }
 
-      player.health = clamp(player.health - settings.missileDamage, 0, settings.maxHealth);
-      if (player.health <= 0) {
-        handlePlayerDestroyed(missile.roomId, player, state, settings);
-      }
+      applyDamageToDamageable(damageable, damageable.missileDamage, state, settings, missile.ownerId);
       state.missiles.delete(missileId);
       exploded = true;
       break;
@@ -500,7 +914,7 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
       }
 
       spawnExplosion(missile.roomId, supplyCube.position, state, settings);
-      supplyCube.position = randomSpawnPosition(settings.worldHalfExtent);
+      handleSupplyCubeConsumed(supplyCube, state, settings);
       state.missiles.delete(missileId);
       exploded = true;
       break;
@@ -516,6 +930,24 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
     explosion.life = clamp(explosion.ticksLeft / explosion.maxTicks, 0, 1);
     if (explosion.ticksLeft <= 0) {
       state.explosions.delete(explosionId);
+    }
+  }
+
+  for (const [supplyCubeId, supplyCube] of state.supplyCubes.entries()) {
+    if (supplyCube.autoSpawn) {
+      continue;
+    }
+
+    supplyCube.position.x += supplyCube.velocity.x;
+    supplyCube.position.y += supplyCube.velocity.y;
+    supplyCube.position.z += supplyCube.velocity.z;
+
+    const hitWorldEdge =
+      Math.abs(supplyCube.position.x) >= settings.worldHalfExtent ||
+      Math.abs(supplyCube.position.y) >= settings.worldHalfExtent ||
+      Math.abs(supplyCube.position.z) >= settings.worldHalfExtent;
+    if (hitWorldEdge) {
+      state.supplyCubes.delete(supplyCubeId);
     }
   }
 
@@ -543,8 +975,75 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
       } else {
         player.missileAmmo = settings.initialMissileAmmo;
       }
-      supplyCube.position = randomSpawnPosition(settings.worldHalfExtent);
+      handleSupplyCubeConsumed(supplyCube, state, settings);
       break;
+    }
+  }
+
+  for (const [transportId, transport] of state.transports.entries()) {
+    transport.position.x += transport.velocity.x * settings.transportSpeed;
+    transport.position.y += transport.velocity.y * settings.transportSpeed;
+    transport.position.z += transport.velocity.z * settings.transportSpeed;
+
+    const leftWorldBounds =
+      Math.abs(transport.position.x) > settings.worldHalfExtent + 15 ||
+      Math.abs(transport.position.y) > settings.worldHalfExtent + 15 ||
+      Math.abs(transport.position.z) > settings.worldHalfExtent + 15;
+    if (!leftWorldBounds) {
+      continue;
+    }
+
+    state.transports.delete(transportId);
+    scheduleTransportRespawn(transport.roomId, state, settings);
+  }
+
+  const nowMs = Date.now();
+  for (const transport of state.transports.values()) {
+    transportTryShootAtAttackers(transport, state, settings, nowMs);
+  }
+
+  const roomIds = new Set<RoomId_t>();
+  for (const roomId of state.playerRoomById.values()) {
+    if (roomId) {
+      roomIds.add(roomId);
+    }
+  }
+  for (const transport of state.transports.values()) {
+    roomIds.add(transport.roomId);
+  }
+
+  for (const roomId of roomIds.values()) {
+    const roomDamageables = getDamageablesInRoom(roomId, state, settings);
+    for (let i = 0; i < roomDamageables.length; i += 1) {
+      const first = roomDamageables[i];
+      if (!first || getCurrentDamageableHealth(first, state) <= 0) {
+        continue;
+      }
+
+      for (let j = i + 1; j < roomDamageables.length; j += 1) {
+        const second = roomDamageables[j];
+        if (!second || getCurrentDamageableHealth(second, state) <= 0) {
+          continue;
+        }
+
+        const dx = first.position.x - second.position.x;
+        const dy = first.position.y - second.position.y;
+        const dz = first.position.z - second.position.z;
+        const collisionDistance = first.collisionRadius + second.collisionRadius;
+        if (dx * dx + dy * dy + dz * dz > collisionDistance * collisionDistance) {
+          continue;
+        }
+
+        const firstHealth = getCurrentDamageableHealth(first, state);
+        const secondHealth = getCurrentDamageableHealth(second, state);
+        const collisionDamage = Math.min(firstHealth, secondHealth);
+        if (collisionDamage <= 0) {
+          continue;
+        }
+
+        applyDamageToDamageable(first, collisionDamage, state, settings);
+        applyDamageToDamageable(second, collisionDamage, state, settings);
+      }
     }
   }
 };

@@ -21,6 +21,7 @@ import {
 import {
   buildWorldStateForPlayer,
   getForwardVector,
+  spawnTransportForRoom,
   tickSimulation,
   type Explosion_t,
   type InputState_t,
@@ -29,6 +30,7 @@ import {
   type SimulationSettings_t,
   type SimulationState_t,
   type SupplyCube_t,
+  type Transport_t,
 } from "./simulation.js";
 import { normalizeAxisInput, normalizeVector, quaternionFromEulerYXZ, randomSpawnPosition } from "./math.js";
 
@@ -44,17 +46,25 @@ const worldHalfExtent = WORLD_HALF_EXTENT;
 const projectileSpeed = 8.5;
 const projectileLifetimeTicks = tickRateHz * 4;
 const maxHealth = 100;
+const transportInitialHealth = 500;
 const projectileDamage = 10;
 const missileDamage = 100;
 const initialProjectileAmmo = 100;
 const initialMissileAmmo = 5;
 const missileSpeed = 5.2;
+const transportSpeed = 1.45;
+const transportsPerRoom = 5;
+const transportAggroRange = 360;
+const transportAttackCooldownMs = 334;
+const transportProjectileLifetimeTicks = tickRateHz * 3;
 const missileLifetimeTicks = tickRateHz * 6;
 const missileTurnLerp = 0.18;
 const explosionLifetimeTicks = Math.floor(tickRateHz * 0.6);
 const shootCooldownMs = 180;
 const homingCooldownMs = 1200;
 const hitRadius = 5;
+const playerCollisionRadius = 5;
+const transportCollisionRadius = 7;
 const missileHitRadius = 4.2;
 const supplyCubePickupRadius = 6;
 const supplyCubeHitRadius = 5;
@@ -80,6 +90,7 @@ const projectiles = new Map<string, Projectile_t>();
 const missiles = new Map<string, Missile_t>();
 const explosions = new Map<string, Explosion_t>();
 const supplyCubes = new Map<string, SupplyCube_t>();
+const transports = new Map<string, Transport_t>();
 const lastShotAtMsByPlayer = new Map<PlayerId_t, number>();
 const lastHomingAtMsByPlayer = new Map<PlayerId_t, number>();
 const respawnTimerByPlayer = new Map<PlayerId_t, ReturnType<typeof setTimeout>>();
@@ -93,6 +104,7 @@ const simulationState: SimulationState_t = {
   missiles,
   explosions,
   supplyCubes,
+  transports,
   respawnTimerByPlayer,
 };
 
@@ -101,10 +113,14 @@ const simulationSettings: SimulationSettings_t = {
   worldHalfExtent,
   projectileSpeed,
   maxHealth,
+  transportInitialHealth,
   projectileDamage,
   missileDamage,
   missileSpeed,
   missileTurnLerp,
+  transportSpeed,
+  playerCollisionRadius,
+  transportCollisionRadius,
   hitRadius,
   missileHitRadius,
   supplyCubePickupRadius,
@@ -113,6 +129,12 @@ const simulationSettings: SimulationSettings_t = {
   respawnDelayMs,
   initialProjectileAmmo,
   initialMissileAmmo,
+  transportsPerRoom,
+  transportAggroRange,
+  transportAttackCooldownMs,
+  transportProjectileLifetimeTicks,
+  projectileSpawnOffset,
+  supplyCubeTypes,
 };
 
 const roomState: RoomManagerState_t = {
@@ -122,6 +144,7 @@ const roomState: RoomManagerState_t = {
   missiles,
   explosions,
   supplyCubes,
+  transports,
 };
 
 const randomSpawn = (): { x: number; y: number; z: number } => randomSpawnPosition(worldHalfExtent);
@@ -138,7 +161,12 @@ const sendWorldToPlayer = (playerId: PlayerId_t): void => {
 
   send(client.socket, {
     type: "world",
-    state: buildWorldStateForPlayer({ playerId, state: roomState, players }),
+    state: buildWorldStateForPlayer({
+      playerId,
+      state: roomState,
+      players,
+      transportAggroRange: simulationSettings.transportAggroRange,
+    }),
   });
 };
 
@@ -238,6 +266,7 @@ wss.on("connection", (socket) => {
       projectiles.set(projectileId, {
         id: projectileId,
         ownerId: playerId,
+        ownerKind: "player",
         roomId,
         position: {
           x: state.position.x + forward.x * projectileSpawnOffset,
@@ -263,9 +292,26 @@ wss.on("connection", (socket) => {
         return;
       }
 
-      const target = players.get(message.targetId);
-      if (!target || !target.isAlive || target.id === playerId || playerRoomById.get(target.id) !== roomId) {
-        return;
+      let targetId = message.targetId;
+      if (message.targetKind === "player") {
+        const targetPlayer = players.get(message.targetId as PlayerId_t);
+        if (
+          !targetPlayer ||
+          !targetPlayer.isAlive ||
+          targetPlayer.id === playerId ||
+          playerRoomById.get(targetPlayer.id) !== roomId
+        ) {
+          return;
+        }
+
+        targetId = targetPlayer.id;
+      } else {
+        const targetTransport = transports.get(message.targetId);
+        if (!targetTransport || targetTransport.roomId !== roomId || targetTransport.health <= 0) {
+          return;
+        }
+
+        targetId = targetTransport.id;
       }
 
       const nowMs = Date.now();
@@ -279,7 +325,8 @@ wss.on("connection", (socket) => {
       missiles.set(missileId, {
         id: missileId,
         ownerId: playerId,
-        targetId: target.id,
+        targetId,
+        targetKind: message.targetKind,
         roomId,
         position: {
           x: state.position.x + forward.x * projectileSpawnOffset,
@@ -305,6 +352,17 @@ wss.on("connection", (socket) => {
         supplyCubeTypes,
         randomSpawnPosition: randomSpawn,
       });
+      const createdRoomId = playerRoomById.get(playerId);
+      if (createdRoomId) {
+        for (let i = 0; i < transportsPerRoom; i += 1) {
+          spawnTransportForRoom({
+            roomId: createdRoomId,
+            transports,
+            worldHalfExtent,
+            initialHealth: transportInitialHealth,
+          });
+        }
+      }
       broadcastWorld();
       return;
     }

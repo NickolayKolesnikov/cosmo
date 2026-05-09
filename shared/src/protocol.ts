@@ -32,7 +32,8 @@ export type PlayerState_t = {
 
 export type ProjectileState_t = {
   id: string;
-  ownerId: PlayerId_t;
+  ownerId: string;
+  ownerKind: "player" | "transport";
   position: Vec3_t;
   velocity: Vec3_t;
 };
@@ -40,9 +41,17 @@ export type ProjectileState_t = {
 export type MissileState_t = {
   id: string;
   ownerId: PlayerId_t;
-  targetId: PlayerId_t;
+  targetId: string;
+  targetKind: MissileTargetKind_t;
   position: Vec3_t;
   velocity: Vec3_t;
+};
+
+export type MissileTargetKind_t = "player" | "transport";
+
+export type MissileTarget_t = {
+  targetId: string;
+  targetKind: MissileTargetKind_t;
 };
 
 export type ExplosionState_t = {
@@ -56,7 +65,17 @@ export type SupplyCubeType_t = "projectile_ammo" | "missile_ammo" | "health";
 export type SupplyCubeState_t = {
   id: string;
   position: Vec3_t;
+  velocity: Vec3_t;
   cubeType: SupplyCubeType_t;
+  autoSpawn: boolean;
+};
+
+export type TransportState_t = {
+  id: string;
+  position: Vec3_t;
+  velocity: Vec3_t;
+  health: number;
+  isAggroOnPlayer: boolean;
 };
 
 export type WorldState_t = {
@@ -69,6 +88,7 @@ export type WorldState_t = {
   missiles: MissileState_t[];
   explosions: ExplosionState_t[];
   supplyCubes: SupplyCubeState_t[];
+  transports: TransportState_t[];
   serverTimeMs: number;
 };
 
@@ -95,7 +115,8 @@ export type ClientMessage_t =
     }
   | {
       type: "launch_homing";
-      targetId: PlayerId_t;
+      targetId: string;
+      targetKind: MissileTargetKind_t;
     }
   | {
       type: "create_room";

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import type { SupplyCubeType_t, WorldState_t } from "@cosmos/shared";
+import type { MissileTarget_t, SupplyCubeType_t, WorldState_t } from "@cosmos/shared";
 import { WORLD_HALF_EXTENT } from "@cosmos/shared";
 import {
   AmbientLight,
@@ -77,10 +77,11 @@ export const useThreeScene = ({
   const missileMeshesRef = useRef(new Map<string, Mesh>());
   const explosionMeshesRef = useRef(new Map<string, Mesh>());
   const supplyCubeMeshesRef = useRef(new Map<string, Mesh>());
+  const transportMeshesRef = useRef(new Map<string, Mesh>());
   const centerNdcRef = useRef(new Vector2(0, 0));
   const raycasterRef = useRef(new Raycaster());
   const isCrosshairHotRef = useRef(false);
-  const hoveredTargetIdRef = useRef<string | null>(null);
+  const hoveredTargetRef = useRef<MissileTarget_t | null>(null);
   const missileUpAxisRef = useRef(new Vector3(0, 1, 0));
   const missileDirRef = useRef(new Vector3());
 
@@ -169,9 +170,9 @@ export const useThreeScene = ({
       }
 
       const raycaster = raycasterRef.current;
-      const targetMeshes = [...meshesRef.current.values()];
+      const targetMeshes = [...meshesRef.current.values(), ...transportMeshesRef.current.values()];
       let isHot = false;
-      let hoveredTargetId: string | null = null;
+      let hoveredTarget: MissileTarget_t | null = null;
       if (targetMeshes.length > 0 && worldRef.current.roomId) {
         raycaster.setFromCamera(centerNdcRef.current, camera);
         const hits = raycaster.intersectObjects(targetMeshes, false);
@@ -179,12 +180,16 @@ export const useThreeScene = ({
         if (isHot) {
           const firstHit = hits[0];
           if (firstHit) {
-            hoveredTargetId = (firstHit.object.userData.playerId as string | undefined) ?? null;
+            const targetKind = firstHit.object.userData.targetKind as MissileTarget_t["targetKind"] | undefined;
+            const targetId = firstHit.object.userData.targetId as string | undefined;
+            if (targetKind && targetId) {
+              hoveredTarget = { targetKind, targetId };
+            }
           }
         }
       }
 
-      hoveredTargetIdRef.current = hoveredTargetId;
+      hoveredTargetRef.current = hoveredTarget;
 
       if (isHot !== isCrosshairHotRef.current) {
         isCrosshairHotRef.current = isHot;
@@ -235,6 +240,11 @@ export const useThreeScene = ({
         (mesh.material as MeshStandardMaterial).dispose();
       }
       supplyCubeMeshesRef.current.clear();
+      for (const mesh of transportMeshesRef.current.values()) {
+        mesh.geometry.dispose();
+        (mesh.material as MeshStandardMaterial).dispose();
+      }
+      transportMeshesRef.current.clear();
       scene.remove(stars);
       starGeometry.dispose();
       starMaterial.dispose();
@@ -288,7 +298,8 @@ export const useThreeScene = ({
         geometry.rotateX(-Math.PI / 2);
         const material = new MeshStandardMaterial({ color: player.color });
         mesh = new Mesh(geometry, material);
-        mesh.userData.playerId = player.id;
+        mesh.userData.targetKind = "player";
+        mesh.userData.targetId = player.id;
         meshesRef.current.set(player.id, mesh);
         threeContext.scene.add(mesh);
       }
@@ -426,6 +437,39 @@ export const useThreeScene = ({
       (mesh.material as MeshStandardMaterial).dispose();
       supplyCubeMeshesRef.current.delete(id);
     }
+
+    const visibleTransportIds = new Set<string>();
+    for (const transport of world.transports) {
+      visibleTransportIds.add(transport.id);
+      let mesh = transportMeshesRef.current.get(transport.id);
+      if (!mesh) {
+        mesh = new Mesh(
+          new BoxGeometry(3.2, 12, 3.2),
+          new MeshStandardMaterial({ color: "#a7c8ff", emissive: "#335b9a", emissiveIntensity: 0.6 })
+        );
+        mesh.userData.targetKind = "transport";
+        mesh.userData.targetId = transport.id;
+        transportMeshesRef.current.set(transport.id, mesh);
+        threeContext.scene.add(mesh);
+      }
+
+      mesh.position.set(transport.position.x, transport.position.y, transport.position.z);
+      missileDirRef.current.set(transport.velocity.x, transport.velocity.y, transport.velocity.z).normalize();
+      if (missileDirRef.current.lengthSq() > 0.00001) {
+        mesh.quaternion.setFromUnitVectors(missileUpAxisRef.current, missileDirRef.current);
+      }
+    }
+
+    for (const [id, mesh] of transportMeshesRef.current.entries()) {
+      if (visibleTransportIds.has(id)) {
+        continue;
+      }
+
+      threeContext.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as MeshStandardMaterial).dispose();
+      transportMeshesRef.current.delete(id);
+    }
   }, [
     getSupplyCubeMaterialByType,
     orientationRef,
@@ -439,6 +483,6 @@ export const useThreeScene = ({
     threeRef,
     isCrosshairHot,
     isCrosshairHotRef,
-    hoveredTargetIdRef,
+    hoveredTargetRef,
   };
 };

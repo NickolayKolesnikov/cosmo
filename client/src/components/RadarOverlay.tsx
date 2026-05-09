@@ -28,6 +28,14 @@ export type RadarMissileContact_t = {
   isAbove: boolean;
 };
 
+export type RadarTransportContact_t = {
+  id: string;
+  xPx: number;
+  yPx: number;
+  altitudePx: number;
+  isAbove: boolean;
+};
+
 const getRadarResourceClassName = (cubeType: SupplyCubeType_t): string => {
   if (cubeType === "projectile_ammo") {
     return "radar-resource-projectile";
@@ -44,9 +52,15 @@ type RadarOverlayProps_t = {
   radarResourceContacts: RadarResourceContact_t[];
   radarMissileContacts: RadarMissileContact_t[];
   radarContacts: RadarContact_t[];
+  radarTransportContacts: RadarTransportContact_t[];
 };
 
-export const RadarOverlay = ({ radarResourceContacts, radarMissileContacts, radarContacts }: RadarOverlayProps_t) => {
+export const RadarOverlay = ({
+  radarResourceContacts,
+  radarMissileContacts,
+  radarContacts,
+  radarTransportContacts,
+}: RadarOverlayProps_t) => {
   return (
     <div className="radar" aria-hidden="true">
       <div className="radar-forward-marker" />
@@ -94,6 +108,28 @@ export const RadarOverlay = ({ radarResourceContacts, radarMissileContacts, rada
                   missile.isAbove ? "radar-missile-altitude-up" : "radar-missile-altitude-down"
                 }`}
                 style={{ height: `${missile.altitudePx}px` }}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+      {radarTransportContacts.map((transport) => {
+        return (
+          <div
+            key={transport.id}
+            className="radar-transport-contact"
+            style={{
+              left: `${radarRadiusPx + transport.xPx}px`,
+              top: `${radarRadiusPx - transport.yPx}px`,
+            }}
+          >
+            <div className="radar-transport-dot" />
+            {transport.altitudePx >= radarHeightEpsilon ? (
+              <div
+                className={`radar-transport-altitude ${
+                  transport.isAbove ? "radar-transport-altitude-up" : "radar-transport-altitude-down"
+                }`}
+                style={{ height: `${transport.altitudePx}px` }}
               />
             ) : null}
           </div>

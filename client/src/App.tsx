@@ -57,7 +57,7 @@ export function App() {
   const qRollRef = useRef(new Quaternion());
   const localForwardRef = useRef(new Vector3(0, 0, -1));
 
-  const { threeRef, isCrosshairHot, isCrosshairHotRef, hoveredTargetIdRef } = useThreeScene({
+  const { threeRef, isCrosshairHot, isCrosshairHotRef, hoveredTargetRef } = useThreeScene({
     world,
     worldRef,
     playerId,
@@ -79,7 +79,7 @@ export function App() {
     getPointerLockTarget,
     sendMessage,
     ensureAudioContext,
-    hoveredTargetIdRef,
+    hoveredTargetRef,
     isCrosshairHotRef,
     orientationRef,
     qYawRef,
@@ -104,10 +104,12 @@ export function App() {
     selfProjectileAmmo,
     isSelfDestroyed,
     hasIncomingMissileLock,
+    hasTransportLock,
     isCrosshairLockedByEnemy,
     radarContacts,
     radarResourceContacts,
     radarMissileContacts,
+    radarTransportContacts,
   } = useHudData(world, playerId);
 
   return (
@@ -143,9 +145,11 @@ export function App() {
             damageFlashId={damageFlashId}
             isCrosshairLockedByEnemy={isCrosshairLockedByEnemy}
             hasIncomingMissileLock={hasIncomingMissileLock}
+            hasTransportLock={hasTransportLock}
             radarContacts={radarContacts}
             radarResourceContacts={radarResourceContacts}
             radarMissileContacts={radarMissileContacts}
+            radarTransportContacts={radarTransportContacts}
             selfHealth={selfHealth}
             selfMissileAmmo={selfMissileAmmo}
             selfProjectileAmmo={selfProjectileAmmo}

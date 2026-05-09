@@ -2,7 +2,12 @@ import { useMemo } from "react";
 import { WORLD_HALF_EXTENT } from "@cosmos/shared";
 import type { WorldState_t } from "@cosmos/shared";
 import { Quaternion, Vector3 } from "three";
-import type { RadarContact_t, RadarMissileContact_t, RadarResourceContact_t } from "../components/RadarOverlay";
+import type {
+  RadarContact_t,
+  RadarMissileContact_t,
+  RadarResourceContact_t,
+  RadarTransportContact_t,
+} from "../components/RadarOverlay";
 
 const radarRange = WORLD_HALF_EXTENT * 1.35;
 const radarMaxAltitudePx = 26;
@@ -15,7 +20,11 @@ export const useHudData = (world: WorldState_t, playerId: string) => {
     const selfProjectileAmmo = selfPlayer?.projectileAmmo ?? 100;
     const isSelfDestroyed = Boolean(selfPlayer && !selfPlayer.isAlive);
     const hasIncomingMissileLock = Boolean(
-      selfPlayer && world.missiles.some((missile) => missile.targetId === selfPlayer.id)
+      selfPlayer &&
+        world.missiles.some((missile) => missile.targetKind === "player" && missile.targetId === selfPlayer.id)
+    );
+    const hasTransportLock = Boolean(
+      selfPlayer && selfPlayer.isAlive && world.transports.some((transport) => transport.isAggroOnPlayer)
     );
 
     const isCrosshairLockedByEnemy = (() => {
@@ -57,6 +66,7 @@ export const useHudData = (world: WorldState_t, playerId: string) => {
     const radarContacts: RadarContact_t[] = [];
     const radarResourceContacts: RadarResourceContact_t[] = [];
     const radarMissileContacts: RadarMissileContact_t[] = [];
+    const radarTransportContacts: RadarTransportContact_t[] = [];
 
     if (selfPlayer) {
       const selfQuaternion = new Quaternion(
@@ -143,6 +153,25 @@ export const useHudData = (world: WorldState_t, playerId: string) => {
           isAbove: altitude > 0,
         });
       }
+
+      for (const transport of world.transports) {
+        const toTransport = new Vector3(
+          transport.position.x - selfPlayer.position.x,
+          transport.position.y - selfPlayer.position.y,
+          transport.position.z - selfPlayer.position.z
+        );
+        const projected = projectToRadar(toTransport);
+        const altitude = toTransport.dot(planeNormal);
+        const altitudePx = Math.min(radarMaxAltitudePx, Math.abs(altitude) * (radarMaxAltitudePx / radarRange));
+
+        radarTransportContacts.push({
+          id: transport.id,
+          xPx: projected.xPx,
+          yPx: projected.yPx,
+          altitudePx,
+          isAbove: altitude > 0,
+        });
+      }
     }
 
     return {
@@ -151,10 +180,12 @@ export const useHudData = (world: WorldState_t, playerId: string) => {
       selfProjectileAmmo,
       isSelfDestroyed,
       hasIncomingMissileLock,
+      hasTransportLock,
       isCrosshairLockedByEnemy,
       radarContacts,
       radarResourceContacts,
       radarMissileContacts,
+      radarTransportContacts,
     };
   }, [playerId, world]);
 };
