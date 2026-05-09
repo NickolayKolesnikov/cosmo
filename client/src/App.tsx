@@ -5,6 +5,7 @@ import { wsUrl } from "./config";
 import {
   AmbientLight,
   AxesHelper,
+  BufferGeometry,
   BoxGeometry,
   CanvasTexture,
   Color,
@@ -20,6 +21,9 @@ import {
   Raycaster,
   Scene,
   SphereGeometry,
+  Float32BufferAttribute,
+  Points,
+  PointsMaterial,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -32,6 +36,9 @@ const radarRange = WORLD_HALF_EXTENT * 1.35;
 const radarMaxAltitudePx = 26;
 const radarHeightEpsilon = 2;
 const radarRadiusPx = 64;
+const starFieldCount = 2600;
+const starFieldRadius = WORLD_HALF_EXTENT * 2.8;
+const starFieldThickness = WORLD_HALF_EXTENT * 0.4;
 
 const normalizeAngle = (value: number): number => {
   let angle = value;
@@ -534,6 +541,33 @@ export function App() {
     scene.add(new GridHelper(WORLD_HALF_EXTENT * 2, 24, 0x3f5e8a, 0x1f2b45));
     scene.add(new AxesHelper(28));
 
+    const starPositions = new Float32Array(starFieldCount * 3);
+    // Distribute stars across a thick spherical shell around the playable cube.
+    for (let i = 0; i < starFieldCount; i += 1) {
+      const theta = Math.random() * Math.PI * 2;
+      const u = Math.random() * 2 - 1;
+      const phi = Math.acos(u);
+      const radius = starFieldRadius + (Math.random() * 2 - 1) * starFieldThickness;
+      const sinPhi = Math.sin(phi);
+      const index = i * 3;
+
+      starPositions[index] = radius * sinPhi * Math.cos(theta);
+      starPositions[index + 1] = radius * Math.cos(phi);
+      starPositions[index + 2] = radius * sinPhi * Math.sin(theta);
+    }
+
+    const starGeometry = new BufferGeometry();
+    starGeometry.setAttribute("position", new Float32BufferAttribute(starPositions, 3));
+    const starMaterial = new PointsMaterial({
+      color: "#cce8ff",
+      size: 2.4,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.88,
+    });
+    const stars = new Points(starGeometry, starMaterial);
+    scene.add(stars);
+
     const boundary = new Mesh(
       new BoxGeometry(WORLD_HALF_EXTENT * 2, WORLD_HALF_EXTENT * 2, WORLD_HALF_EXTENT * 2),
       new MeshStandardMaterial({ color: "#4d6a93", wireframe: true, transparent: true, opacity: 0.12 })
@@ -636,6 +670,9 @@ export function App() {
         (mesh.material as MeshStandardMaterial).dispose();
       }
       supplyCubeMeshesRef.current.clear();
+      scene.remove(stars);
+      starGeometry.dispose();
+      starMaterial.dispose();
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement);
       }
