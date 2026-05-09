@@ -13,7 +13,9 @@ import {
   GridHelper,
   Mesh,
   MeshStandardMaterial,
+  Euler,
   PerspectiveCamera,
+  Quaternion,
   Raycaster,
   Scene,
   SphereGeometry,
@@ -24,6 +26,18 @@ import {
 
 const mouseSensitivity = 0.0022;
 const rollStepPerFrame = 0.02;
+const fullTurn = Math.PI * 2;
+
+const normalizeAngle = (value: number): number => {
+  let angle = value;
+  while (angle > Math.PI) {
+    angle -= fullTurn;
+  }
+  while (angle < -Math.PI) {
+    angle += fullTurn;
+  }
+  return angle;
+};
 
 type ConnectionState_t = "connecting" | "open" | "closed";
 
@@ -59,6 +73,14 @@ export function App() {
   const yawRef = useRef(0);
   const pitchRef = useRef(0);
   const rollRef = useRef(0);
+  const orientationRef = useRef(new Quaternion());
+  const eulerRef = useRef(new Euler(0, 0, 0, "YXZ"));
+  const qYawRef = useRef(new Quaternion());
+  const qPitchRef = useRef(new Quaternion());
+  const qRollRef = useRef(new Quaternion());
+  const localUpRef = useRef(new Vector3(0, 1, 0));
+  const localRightRef = useRef(new Vector3(1, 0, 0));
+  const localForwardRef = useRef(new Vector3(0, 0, -1));
   const containerRef = useRef<HTMLDivElement | null>(null);
   const threeRef = useRef<ThreeContext_t | null>(null);
   const meshesRef = useRef(new Map<string, Mesh>());
@@ -95,6 +117,13 @@ export function App() {
       pitch: pitchRef.current,
       roll: rollRef.current,
     });
+  };
+
+  const syncLookRefsFromOrientation = (): void => {
+    eulerRef.current.setFromQuaternion(orientationRef.current, "YXZ");
+    yawRef.current = normalizeAngle(eulerRef.current.y);
+    pitchRef.current = eulerRef.current.x;
+    rollRef.current = normalizeAngle(eulerRef.current.z);
   };
 
   useEffect(() => {
@@ -155,12 +184,13 @@ export function App() {
       }
 
       camera.position.copy(selfPositionRef.current);
-      camera.rotation.order = "YXZ";
-      camera.rotation.y = yawRef.current;
-      camera.rotation.x = pitchRef.current;
+      camera.quaternion.copy(orientationRef.current);
       const rollInput = (keyStateRef.current.e ? 1 : 0) + (keyStateRef.current.q ? -1 : 0);
-      rollRef.current += rollInput * rollStepPerFrame;
-      camera.rotation.z = rollRef.current;
+      if (rollInput !== 0) {
+        qRollRef.current.setFromAxisAngle(localForwardRef.current, rollInput * rollStepPerFrame);
+        orientationRef.current.multiply(qRollRef.current).normalize();
+        camera.quaternion.copy(orientationRef.current);
+      }
 
       const raycaster = raycasterRef.current;
       const targetMeshes = [...meshesRef.current.values()];
@@ -186,6 +216,7 @@ export function App() {
       }
 
       if (rollInput !== 0 && worldRef.current.roomId) {
+        syncLookRefsFromOrientation();
         sendLook();
       }
 
@@ -236,9 +267,13 @@ export function App() {
     for (const player of world.players) {
       if (player.id === playerId) {
         selfPositionRef.current.set(player.position.x, player.position.y, player.position.z);
-        yawRef.current = player.yaw;
-        pitchRef.current = player.pitch;
-        rollRef.current = player.roll;
+        orientationRef.current.set(
+          player.orientation.x,
+          player.orientation.y,
+          player.orientation.z,
+          player.orientation.w
+        );
+        syncLookRefsFromOrientation();
         continue;
       }
 
@@ -259,8 +294,12 @@ export function App() {
       }
 
       mesh.position.set(player.position.x, player.position.y, player.position.z);
-      mesh.rotation.order = "YXZ";
-      mesh.rotation.set(player.pitch, player.yaw, player.roll);
+      mesh.quaternion.set(
+        player.orientation.x,
+        player.orientation.y,
+        player.orientation.z,
+        player.orientation.w
+      );
     }
 
     for (const [id, mesh] of meshesRef.current.entries()) {
@@ -383,14 +422,14 @@ export function App() {
         return;
       }
 
-      const cosRoll = Math.cos(rollRef.current);
-      const sinRoll = Math.sin(rollRef.current);
+      const yawAngle = -event.movementX * mouseSensitivity;
+      const pitchAngle = -event.movementY * mouseSensitivity;
 
-      const yawDelta = (-event.movementX * cosRoll - event.movementY * sinRoll) * mouseSensitivity;
-      const pitchDelta = (event.movementX * sinRoll - event.movementY * cosRoll) * mouseSensitivity;
+      qYawRef.current.setFromAxisAngle(localUpRef.current, yawAngle);
+      qPitchRef.current.setFromAxisAngle(localRightRef.current, pitchAngle);
+      orientationRef.current.multiply(qYawRef.current).multiply(qPitchRef.current).normalize();
 
-      yawRef.current += yawDelta;
-      pitchRef.current += pitchDelta;
+      syncLookRefsFromOrientation();
 
       sendLook();
     };

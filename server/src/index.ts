@@ -8,6 +8,7 @@ import type {
   PlayerId_t,
   PlayerState_t,
   ProjectileState_t,
+  Quaternion_t,
   RoomId_t,
   RoomSummary_t,
   ServerMessage_t,
@@ -74,6 +75,7 @@ const wss = new WebSocketServer({ server: httpServer });
 
 const clients = new Map<PlayerId_t, Client_t>();
 const players = new Map<PlayerId_t, PlayerState_t>();
+const orientationByPlayerId = new Map<PlayerId_t, Quaternion_t>();
 const inputs = new Map<PlayerId_t, InputState_t>();
 const rooms = new Map<RoomId_t, Room_t>();
 const playerRoomById = new Map<PlayerId_t, RoomId_t | null>();
@@ -270,6 +272,55 @@ const normalizeAxisInput = (value: number): number => {
   return clamp(value, -1, 1);
 };
 
+const normalizeQuaternion = (q: Quaternion_t): Quaternion_t => {
+  const length = Math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+  if (length <= 0.000001) {
+    return { x: 0, y: 0, z: 0, w: 1 };
+  }
+
+  return {
+    x: q.x / length,
+    y: q.y / length,
+    z: q.z / length,
+    w: q.w / length,
+  };
+};
+
+const quaternionFromEulerYXZ = (pitch: number, yaw: number, roll: number): Quaternion_t => {
+  const c1 = Math.cos(pitch / 2);
+  const c2 = Math.cos(yaw / 2);
+  const c3 = Math.cos(roll / 2);
+  const s1 = Math.sin(pitch / 2);
+  const s2 = Math.sin(yaw / 2);
+  const s3 = Math.sin(roll / 2);
+
+  return normalizeQuaternion({
+    x: s1 * c2 * c3 + c1 * s2 * s3,
+    y: c1 * s2 * c3 - s1 * c2 * s3,
+    z: c1 * c2 * s3 - s1 * s2 * c3,
+    w: c1 * c2 * c3 + s1 * s2 * s3,
+  });
+};
+
+const rotateVectorByQuaternion = (vector: Vec3_t, quaternion: Quaternion_t): Vec3_t => {
+  const u = { x: quaternion.x, y: quaternion.y, z: quaternion.z };
+  const s = quaternion.w;
+  const dotUV = u.x * vector.x + u.y * vector.y + u.z * vector.z;
+  const dotUU = u.x * u.x + u.y * u.y + u.z * u.z;
+
+  const cross = {
+    x: u.y * vector.z - u.z * vector.y,
+    y: u.z * vector.x - u.x * vector.z,
+    z: u.x * vector.y - u.y * vector.x,
+  };
+
+  return {
+    x: 2 * dotUV * u.x + (s * s - dotUU) * vector.x + 2 * s * cross.x,
+    y: 2 * dotUV * u.y + (s * s - dotUU) * vector.y + 2 * s * cross.y,
+    z: 2 * dotUV * u.z + (s * s - dotUU) * vector.z + 2 * s * cross.z,
+  };
+};
+
 const randomSpawnPosition = (): Vec3_t => {
   return {
     x: Math.floor(Math.random() * (worldHalfExtent * 2 + 1)) - worldHalfExtent,
@@ -278,13 +329,29 @@ const randomSpawnPosition = (): Vec3_t => {
   };
 };
 
-const getForwardVector = (state: PlayerState_t): Vec3_t => {
-  const cosPitch = Math.cos(state.pitch);
-  return {
-    x: -Math.sin(state.yaw) * cosPitch,
-    y: Math.sin(state.pitch),
-    z: -Math.cos(state.yaw) * cosPitch,
-  };
+const getPlayerOrientation = (playerId: PlayerId_t, state: PlayerState_t): Quaternion_t => {
+  if (state.orientation) {
+    return state.orientation;
+  }
+
+  const orientation = orientationByPlayerId.get(playerId);
+  if (orientation) {
+    return orientation;
+  }
+
+  const computed = quaternionFromEulerYXZ(state.pitch, state.yaw, state.roll);
+  orientationByPlayerId.set(playerId, computed);
+  return computed;
+};
+
+const getForwardVector = (playerId: PlayerId_t, state: PlayerState_t): Vec3_t => {
+  const orientation = getPlayerOrientation(playerId, state);
+  return rotateVectorByQuaternion({ x: 0, y: 0, z: -1 }, orientation);
+};
+
+const getRightVector = (playerId: PlayerId_t, state: PlayerState_t): Vec3_t => {
+  const orientation = getPlayerOrientation(playerId, state);
+  return rotateVectorByQuaternion({ x: 1, y: 0, z: 0 }, orientation);
 };
 
 const vectorLength = (vector: Vec3_t): number => {
@@ -376,26 +443,12 @@ const tickSimulation = (): void => {
       continue;
     }
 
-    const forward = getForwardVector(state);
+    const forward = getForwardVector(playerId, state);
+    const right = getRightVector(playerId, state);
 
-    const baseRightX = Math.cos(state.yaw);
-    const baseRightY = 0;
-    const baseRightZ = -Math.sin(state.yaw);
-
-    const baseUpX = Math.sin(state.yaw) * Math.sin(state.pitch);
-    const baseUpY = Math.cos(state.pitch);
-    const baseUpZ = Math.cos(state.yaw) * Math.sin(state.pitch);
-
-    const cosRoll = Math.cos(state.roll);
-    const sinRoll = Math.sin(state.roll);
-
-    const rightX = baseRightX * cosRoll + baseUpX * sinRoll;
-    const rightY = baseRightY * cosRoll + baseUpY * sinRoll;
-    const rightZ = baseRightZ * cosRoll + baseUpZ * sinRoll;
-
-    state.position.x = clampAxis(state.position.x + (forward.x * input.forward + rightX * input.strafe) * moveSpeed);
-    state.position.y = clampAxis(state.position.y + (forward.y * input.forward + rightY * input.strafe) * moveSpeed);
-    state.position.z = clampAxis(state.position.z + (forward.z * input.forward + rightZ * input.strafe) * moveSpeed);
+    state.position.x = clampAxis(state.position.x + (forward.x * input.forward + right.x * input.strafe) * moveSpeed);
+    state.position.y = clampAxis(state.position.y + (forward.y * input.forward + right.y * input.strafe) * moveSpeed);
+    state.position.z = clampAxis(state.position.z + (forward.z * input.forward + right.z * input.strafe) * moveSpeed);
   }
 
   for (const [projectileId, projectile] of projectiles.entries()) {
@@ -543,11 +596,14 @@ wss.on("connection", (socket) => {
     yaw: 0,
     pitch: 0,
     roll: 0,
+    orientation: { x: 0, y: 0, z: 0, w: 1 },
     isAlive: true,
     color: `hsl(${Math.floor(Math.random() * 360)} 80% 55%)`,
   };
 
+  playerState.orientation = quaternionFromEulerYXZ(playerState.pitch, playerState.yaw, playerState.roll);
   players.set(playerId, playerState);
+  orientationByPlayerId.set(playerId, quaternionFromEulerYXZ(playerState.pitch, playerState.yaw, playerState.roll));
   clients.set(playerId, { playerId, socket });
   inputs.set(playerId, { forward: 0, strafe: 0 });
   playerRoomById.set(playerId, null);
@@ -586,6 +642,8 @@ wss.on("connection", (socket) => {
       state.yaw = message.yaw;
       state.pitch = message.pitch;
       state.roll = message.roll;
+      state.orientation = quaternionFromEulerYXZ(state.pitch, state.yaw, state.roll);
+      orientationByPlayerId.set(playerId, state.orientation);
       return;
     }
 
@@ -601,7 +659,7 @@ wss.on("connection", (socket) => {
         return;
       }
 
-      const forward = getForwardVector(state);
+      const forward = getForwardVector(playerId, state);
       const projectileId = randomUUID().slice(0, 12);
 
       projectiles.set(projectileId, {
@@ -638,7 +696,7 @@ wss.on("connection", (socket) => {
         return;
       }
 
-      const forward = getForwardVector(state);
+      const forward = getForwardVector(playerId, state);
       const missileId = randomUUID().slice(0, 12);
       missiles.set(missileId, {
         id: missileId,
@@ -695,6 +753,7 @@ wss.on("connection", (socket) => {
     leaveCurrentRoom(playerId);
     playerRoomById.delete(playerId);
     inputs.delete(playerId);
+    orientationByPlayerId.delete(playerId);
     lastShotAtMsByPlayer.delete(playerId);
     lastHomingAtMsByPlayer.delete(playerId);
     clients.delete(playerId);

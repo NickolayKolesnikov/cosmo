@@ -4,6 +4,13 @@ export type Vec3_t = {
   z: number;
 };
 
+export type Quaternion_t = {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+};
+
 export const WORLD_HALF_EXTENT = 180;
 
 export type PlayerId_t = string;
@@ -15,6 +22,7 @@ export type PlayerState_t = {
   yaw: number;
   pitch: number;
   roll: number;
+  orientation: Quaternion_t;
   isAlive: boolean;
   color: string;
 };
