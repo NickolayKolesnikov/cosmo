@@ -1232,60 +1232,62 @@ export function App() {
 
   return (
     <main className="page">
-      <h1>Cosmos Multiplayer</h1>
-      <p>
-        Status: <strong>{connection}</strong> | You: <strong>{playerId || "pending"}</strong> | Ping:
-        <strong> {latencyMs} ms</strong>
-      </p>
-      <p>
-        {world.roomId
-          ? "Click 3D view to lock mouse. Move mouse to rotate. W/S fly forward/back, A/D strafe, Q/E roll, LMB shoot, RMB launch homing missile on red target."
-          : "Create or join a room to start playing."}
-      </p>
-      <p>Mouse lock: {isPointerLocked ? "active" : "inactive"}</p>
-
-      <section className="rooms">
-        <h2>Rooms</h2>
-        <div className="room-actions">
-          <input
-            value={roomName}
-            onChange={(event) => setRoomName(event.target.value)}
-            placeholder="Room name"
-            maxLength={40}
-          />
-          <button type="button" onClick={createRoom}>
-            Create room
-          </button>
-        </div>
-        {errorText ? <p className="error-text">{errorText}</p> : null}
-        <ul className="room-list">
-          {world.availableRooms.map((room) => {
-            const isCurrent = room.id === world.roomId;
-            return (
-              <li key={room.id}>
-                <span>
-                  {room.name} ({room.playerCount})
-                </span>
-                <button type="button" onClick={() => joinRoom(room.id)} disabled={isCurrent}>
-                  {isCurrent ? "Joined" : "Join"}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-
-      <section className="room-members">
-        <h2>Players In Room</h2>
+      <aside className="sidebar">
+        <h1>Cosmos Multiplayer</h1>
         <p>
-          Current room: <strong>{world.roomName ?? "No room selected"}</strong>
+          Status: <strong>{connection}</strong> | You: <strong>{playerId || "pending"}</strong> | Ping:
+          <strong> {latencyMs} ms</strong>
         </p>
-        <ul>
-          {world.roomPlayerIds.map((id) => (
-            <li key={id}>{id === playerId ? `${id} (you)` : id}</li>
-          ))}
-        </ul>
-      </section>
+        <p>
+          {world.roomId
+            ? "Click 3D view to lock mouse. Move mouse to rotate. W/S fly forward/back, A/D strafe, Q/E roll, LMB shoot, RMB launch homing missile on red target."
+            : "Create or join a room to start playing."}
+        </p>
+        <p>Mouse lock: {isPointerLocked ? "active" : "inactive"}</p>
+
+        <section className="rooms">
+          <h2>Rooms</h2>
+          <div className="room-actions">
+            <input
+              value={roomName}
+              onChange={(event) => setRoomName(event.target.value)}
+              placeholder="Room name"
+              maxLength={40}
+            />
+            <button type="button" onClick={createRoom}>
+              Create room
+            </button>
+          </div>
+          {errorText ? <p className="error-text">{errorText}</p> : null}
+          <ul className="room-list">
+            {world.availableRooms.map((room) => {
+              const isCurrent = room.id === world.roomId;
+              return (
+                <li key={room.id}>
+                  <span>
+                    {room.name} ({room.playerCount})
+                  </span>
+                  <button type="button" onClick={() => joinRoom(room.id)} disabled={isCurrent}>
+                    {isCurrent ? "Joined" : "Join"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
+        <section className="room-members">
+          <h2>Players In Room</h2>
+          <p>
+            Current room: <strong>{world.roomName ?? "No room selected"}</strong>
+          </p>
+          <ul>
+            {world.roomPlayerIds.map((id) => (
+              <li key={id}>{id === playerId ? `${id} (you)` : id}</li>
+            ))}
+          </ul>
+        </section>
+      </aside>
 
       <section className="arena3d" aria-label="3D world">
         <div
