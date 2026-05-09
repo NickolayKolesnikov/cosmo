@@ -151,6 +151,37 @@ button:disabled {
   transform: translateY(-50%);
 }
 
+.damage-flash-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at center, rgba(255, 0, 0, 0.04) 0%, rgba(255, 0, 0, 0.1) 48%, rgba(255, 0, 0, 0.34) 100%);
+  animation: damage-flash-pulse 280ms ease-out forwards;
+}
+
+.death-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at center, rgba(255, 0, 0, 0.08) 0%, rgba(180, 0, 0, 0.18) 46%, rgba(120, 0, 0, 0.52) 100%);
+}
+
+@keyframes damage-flash-pulse {
+  0% {
+    opacity: 0;
+  }
+
+  18% {
+    opacity: 0.72;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
 .hud-stats {
   position: absolute;
   right: 14px;

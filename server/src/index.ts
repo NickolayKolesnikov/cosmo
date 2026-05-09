@@ -52,7 +52,7 @@ const missileHitRadius = 4.2;
 const supplyCubePickupRadius = 6;
 const supplyCubeHitRadius = 5;
 const supplyCubesPerRoom = 5;
-const respawnDelayMs = 1400;
+const respawnDelayMs = 3000;
 const projectileSpawnOffset = 6;
 const supplyCubeTypes: SupplyCubeType_t[] = ["projectile_ammo", "missile_ammo", "health"];
 

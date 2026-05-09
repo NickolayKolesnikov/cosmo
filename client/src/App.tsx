@@ -185,6 +185,7 @@ export function App() {
   const [errorText, setErrorText] = useState<string>("");
   const [isPointerLocked, setIsPointerLocked] = useState<boolean>(false);
   const [isCrosshairHot, setIsCrosshairHot] = useState<boolean>(false);
+  const [damageFlashId, setDamageFlashId] = useState<number>(0);
 
   const worldRef = useRef<WorldState_t>(world);
   const playerIdRef = useRef<string>("");
@@ -214,6 +215,7 @@ export function App() {
   const hoveredTargetIdRef = useRef<string | null>(null);
   const missileUpAxisRef = useRef(new Vector3(0, 1, 0));
   const missileDirRef = useRef(new Vector3());
+  const lastSelfHealthRef = useRef<number | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -249,6 +251,21 @@ export function App() {
   useEffect(() => {
     worldRef.current = world;
   }, [world]);
+
+  useEffect(() => {
+    const self = world.players.find((player) => player.id === playerId);
+    if (!self) {
+      lastSelfHealthRef.current = null;
+      return;
+    }
+
+    const previousHealth = lastSelfHealthRef.current;
+    if (previousHealth !== null && self.health < previousHealth) {
+      setDamageFlashId((value) => value + 1);
+    }
+
+    lastSelfHealthRef.current = self.health;
+  }, [playerId, world]);
 
   useEffect(() => {
     playerIdRef.current = playerId;
@@ -795,6 +812,7 @@ export function App() {
   const selfHealth = selfPlayer?.health ?? 100;
   const selfMissileAmmo = selfPlayer?.missileAmmo ?? 5;
   const selfProjectileAmmo = selfPlayer?.projectileAmmo ?? 100;
+  const isSelfDestroyed = Boolean(selfPlayer && !selfPlayer.isAlive);
 
   return (
     <main className="page">
@@ -865,6 +883,8 @@ export function App() {
           }}
         >
           <div className={`crosshair ${isCrosshairHot ? "hot" : ""}`} aria-hidden="true" />
+          {isSelfDestroyed ? <div className="death-overlay" aria-hidden="true" /> : null}
+          {damageFlashId > 0 ? <div key={damageFlashId} className="damage-flash-overlay" aria-hidden="true" /> : null}
           <div className="hud-stats" aria-hidden="true">
             <div className="hud-stat-line">HP {Math.round(selfHealth)}</div>
             <div className="hud-stat-line">Rockets {selfMissileAmmo}</div>
