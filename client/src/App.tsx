@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ClientMessage_t, ServerMessage_t, WorldState_t } from "@cosmos/shared";
 import { WORLD_HALF_EXTENT } from "@cosmos/shared";
+import { wsUrl } from "./config";
 import {
   AmbientLight,
   AxesHelper,
@@ -21,7 +22,6 @@ import {
   WebGLRenderer,
 } from "three";
 
-const wsUrl = "ws://localhost:5001";
 const mouseSensitivity = 0.0022;
 const rollStepPerFrame = 0.02;
 

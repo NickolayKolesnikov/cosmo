@@ -708,6 +708,6 @@ setInterval(() => {
   broadcastWorld();
 }, 1000 / tickRateHz);
 
-httpServer.listen(port, () => {
-  console.log(`Server listening on http://localhost:${port}`);
+httpServer.listen(port, "0.0.0.0", () => {
+  console.log(`Server listening on http://0.0.0.0:${port}`);
 });
