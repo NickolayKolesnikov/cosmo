@@ -11,7 +11,7 @@ export type Quaternion_t = {
   w: number;
 };
 
-export const WORLD_HALF_EXTENT = 180;
+export const WORLD_HALF_EXTENT = 600;
 
 export type PlayerId_t = string;
 export type RoomId_t = string;

@@ -256,6 +256,67 @@ button:disabled {
   box-shadow: 0 0 8px rgba(94, 255, 138, 0.75);
 }
 
+.radar-resource {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border-radius: 1px;
+  opacity: 0.68;
+}
+
+.radar-resource-contact {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.radar-resource-projectile {
+  background: rgba(106, 255, 138, 0.72);
+  box-shadow: 0 0 3px rgba(74, 255, 123, 0.32);
+}
+
+.radar-resource-missile {
+  background: rgba(255, 112, 112, 0.72);
+  box-shadow: 0 0 3px rgba(255, 88, 88, 0.32);
+}
+
+.radar-resource-health {
+  background: rgba(245, 245, 245, 0.74);
+  box-shadow: 0 0 3px rgba(255, 255, 255, 0.34);
+}
+
+.radar-resource-altitude {
+  position: absolute;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  opacity: 0.62;
+}
+
+.radar-resource-altitude-up {
+  bottom: 0;
+}
+
+.radar-resource-altitude-down {
+  top: 0;
+}
+
+.radar-resource-altitude.radar-resource-projectile {
+  background: rgba(106, 255, 138, 0.72);
+  box-shadow: 0 0 3px rgba(74, 255, 123, 0.3);
+}
+
+.radar-resource-altitude.radar-resource-missile {
+  background: rgba(255, 112, 112, 0.72);
+  box-shadow: 0 0 3px rgba(255, 88, 88, 0.3);
+}
+
+.radar-resource-altitude.radar-resource-health {
+  background: rgba(245, 245, 245, 0.74);
+  box-shadow: 0 0 3px rgba(255, 255, 255, 0.32);
+}
+
 .radar-contact {
   position: absolute;
   width: 0;

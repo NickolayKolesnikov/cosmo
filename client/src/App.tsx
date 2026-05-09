@@ -192,6 +192,27 @@ type RadarContact_t = {
   isAbove: boolean;
 };
 
+type RadarResourceContact_t = {
+  id: string;
+  xPx: number;
+  yPx: number;
+  cubeType: SupplyCubeType_t;
+  altitudePx: number;
+  isAbove: boolean;
+};
+
+const getRadarResourceClassName = (cubeType: SupplyCubeType_t): string => {
+  if (cubeType === "projectile_ammo") {
+    return "radar-resource-projectile";
+  }
+
+  if (cubeType === "missile_ammo") {
+    return "radar-resource-missile";
+  }
+
+  return "radar-resource-health";
+};
+
 export function App() {
   const [connection, setConnection] = useState<ConnectionState_t>("connecting");
   const [playerId, setPlayerId] = useState<string>("");
@@ -499,7 +520,7 @@ export function App() {
     const scene = new Scene();
     scene.background = new Color("#0b1220");
 
-    const camera = new PerspectiveCamera(75, 1, 0.1, 2000);
+    const camera = new PerspectiveCamera(75, 1, 0.1, 8000);
 
     const renderer = new WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
@@ -1036,6 +1057,7 @@ export function App() {
   const isSelfDestroyed = Boolean(selfPlayer && !selfPlayer.isAlive);
 
   const radarContacts: RadarContact_t[] = [];
+  const radarResourceContacts: RadarResourceContact_t[] = [];
   if (selfPlayer) {
     const selfQuaternion = new Quaternion(
       selfPlayer.orientation.x,
@@ -1046,6 +1068,18 @@ export function App() {
     const rightAxis = new Vector3(1, 0, 0).applyQuaternion(selfQuaternion).normalize();
     const forwardAxis = new Vector3(0, 0, -1).applyQuaternion(selfQuaternion).normalize();
     const planeNormal = new Vector3().crossVectors(rightAxis, forwardAxis).normalize();
+    const projectToRadar = (delta: Vector3): { xPx: number; yPx: number } => {
+      const lateralX = delta.dot(rightAxis);
+      const lateralY = delta.dot(forwardAxis);
+      const planarDistance = Math.sqrt(lateralX * lateralX + lateralY * lateralY);
+      const normalizedPlanar = planarDistance > 0 ? Math.min(1, planarDistance / radarRange) : 0;
+      const planarScale = planarDistance > 0 ? normalizedPlanar / planarDistance : 0;
+
+      return {
+        xPx: lateralX * planarScale * radarRadiusPx,
+        yPx: lateralY * planarScale * radarRadiusPx,
+      };
+    };
 
     for (const player of world.players) {
       if (player.id === selfPlayer.id || !player.isAlive) {
@@ -1058,21 +1092,34 @@ export function App() {
         player.position.z - selfPlayer.position.z
       );
 
-      const lateralX = toEnemy.dot(rightAxis);
-      const lateralY = toEnemy.dot(forwardAxis);
+      const projected = projectToRadar(toEnemy);
       const altitude = toEnemy.dot(planeNormal);
-      const planarDistance = Math.sqrt(lateralX * lateralX + lateralY * lateralY);
-      const normalizedPlanar = planarDistance > 0 ? Math.min(1, planarDistance / radarRange) : 0;
-      const planarScale = planarDistance > 0 ? normalizedPlanar / planarDistance : 0;
-
-      const projectedX = lateralX * planarScale;
-      const projectedY = lateralY * planarScale;
       const altitudePx = Math.min(radarMaxAltitudePx, Math.abs(altitude) * (radarMaxAltitudePx / radarRange));
 
       radarContacts.push({
         id: player.id,
-        xPx: projectedX * radarRadiusPx,
-        yPx: projectedY * radarRadiusPx,
+        xPx: projected.xPx,
+        yPx: projected.yPx,
+        altitudePx,
+        isAbove: altitude > 0,
+      });
+    }
+
+    for (const supplyCube of world.supplyCubes) {
+      const toResource = new Vector3(
+        supplyCube.position.x - selfPlayer.position.x,
+        supplyCube.position.y - selfPlayer.position.y,
+        supplyCube.position.z - selfPlayer.position.z
+      );
+      const projected = projectToRadar(toResource);
+      const altitude = toResource.dot(planeNormal);
+      const altitudePx = Math.min(radarMaxAltitudePx, Math.abs(altitude) * (radarMaxAltitudePx / radarRange));
+
+      radarResourceContacts.push({
+        id: supplyCube.id,
+        xPx: projected.xPx,
+        yPx: projected.yPx,
+        cubeType: supplyCube.cubeType,
         altitudePx,
         isAbove: altitude > 0,
       });
@@ -1158,6 +1205,28 @@ export function App() {
             <div className="radar-axis radar-axis-x" />
             <div className="radar-axis radar-axis-y" />
             <div className="radar-center-dot" />
+            {radarResourceContacts.map((resource) => {
+              return (
+                <div
+                  key={resource.id}
+                  className="radar-resource-contact"
+                  style={{
+                    left: `${radarRadiusPx + resource.xPx}px`,
+                    top: `${radarRadiusPx - resource.yPx}px`,
+                  }}
+                >
+                  <div className={`radar-resource ${getRadarResourceClassName(resource.cubeType)}`} />
+                  {resource.altitudePx >= radarHeightEpsilon ? (
+                    <div
+                      className={`radar-resource-altitude ${
+                        resource.isAbove ? "radar-resource-altitude-up" : "radar-resource-altitude-down"
+                      } ${getRadarResourceClassName(resource.cubeType)}`}
+                      style={{ height: `${resource.altitudePx}px` }}
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
             {radarContacts.map((contact) => {
               return (
                 <div
