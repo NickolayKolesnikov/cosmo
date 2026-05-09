@@ -182,6 +182,113 @@ button:disabled {
   }
 }
 
+.radar {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  border: 1px solid rgba(160, 209, 255, 0.45);
+  background: radial-gradient(circle at 50% 50%, rgba(25, 62, 84, 0.55), rgba(7, 18, 30, 0.86));
+  box-shadow: inset 0 0 18px rgba(72, 165, 240, 0.18), 0 0 10px rgba(8, 20, 30, 0.55);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.radar-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(170, 220, 255, 0.24);
+}
+
+.radar-forward-marker {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 10px solid rgba(166, 240, 255, 0.95);
+  filter: drop-shadow(0 0 6px rgba(135, 230, 255, 0.7));
+}
+
+.radar-ring-inner {
+  inset: 22%;
+}
+
+.radar-ring-outer {
+  inset: 8%;
+}
+
+.radar-axis {
+  position: absolute;
+  background: rgba(190, 230, 255, 0.24);
+}
+
+.radar-axis-x {
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.radar-axis-y {
+  top: 10px;
+  bottom: 10px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.radar-center-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(151, 248, 170, 0.95);
+  box-shadow: 0 0 8px rgba(94, 255, 138, 0.75);
+}
+
+.radar-contact {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.radar-contact-dot {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 111, 111, 0.95);
+  box-shadow: 0 0 7px rgba(255, 75, 75, 0.72);
+}
+
+.radar-altitude {
+  position: absolute;
+  left: 50%;
+  width: 2px;
+  background: rgba(255, 143, 143, 0.92);
+  transform: translateX(-50%);
+  box-shadow: 0 0 6px rgba(255, 88, 88, 0.62);
+}
+
+.radar-altitude-up {
+  bottom: 0;
+}
+
+.radar-altitude-down {
+  top: 0;
+}
+
 .hud-stats {
   position: absolute;
   right: 14px;

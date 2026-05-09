@@ -28,6 +28,10 @@ import {
 const mouseSensitivity = 0.0022;
 const rollStepPerFrame = 0.02;
 const fullTurn = Math.PI * 2;
+const radarRange = WORLD_HALF_EXTENT * 1.35;
+const radarMaxAltitudePx = 26;
+const radarHeightEpsilon = 2;
+const radarRadiusPx = 64;
 
 const normalizeAngle = (value: number): number => {
   let angle = value;
@@ -178,6 +182,14 @@ type SelfStatsSnapshot_t = {
   projectileAmmo: number;
   missileAmmo: number;
   isAlive: boolean;
+};
+
+type RadarContact_t = {
+  id: string;
+  xPx: number;
+  yPx: number;
+  altitudePx: number;
+  isAbove: boolean;
 };
 
 export function App() {
@@ -1023,6 +1035,50 @@ export function App() {
   const selfProjectileAmmo = selfPlayer?.projectileAmmo ?? 100;
   const isSelfDestroyed = Boolean(selfPlayer && !selfPlayer.isAlive);
 
+  const radarContacts: RadarContact_t[] = [];
+  if (selfPlayer) {
+    const selfQuaternion = new Quaternion(
+      selfPlayer.orientation.x,
+      selfPlayer.orientation.y,
+      selfPlayer.orientation.z,
+      selfPlayer.orientation.w
+    );
+    const rightAxis = new Vector3(1, 0, 0).applyQuaternion(selfQuaternion).normalize();
+    const forwardAxis = new Vector3(0, 0, -1).applyQuaternion(selfQuaternion).normalize();
+    const planeNormal = new Vector3().crossVectors(rightAxis, forwardAxis).normalize();
+
+    for (const player of world.players) {
+      if (player.id === selfPlayer.id || !player.isAlive) {
+        continue;
+      }
+
+      const toEnemy = new Vector3(
+        player.position.x - selfPlayer.position.x,
+        player.position.y - selfPlayer.position.y,
+        player.position.z - selfPlayer.position.z
+      );
+
+      const lateralX = toEnemy.dot(rightAxis);
+      const lateralY = toEnemy.dot(forwardAxis);
+      const altitude = toEnemy.dot(planeNormal);
+      const planarDistance = Math.sqrt(lateralX * lateralX + lateralY * lateralY);
+      const normalizedPlanar = planarDistance > 0 ? Math.min(1, planarDistance / radarRange) : 0;
+      const planarScale = planarDistance > 0 ? normalizedPlanar / planarDistance : 0;
+
+      const projectedX = lateralX * planarScale;
+      const projectedY = lateralY * planarScale;
+      const altitudePx = Math.min(radarMaxAltitudePx, Math.abs(altitude) * (radarMaxAltitudePx / radarRange));
+
+      radarContacts.push({
+        id: player.id,
+        xPx: projectedX * radarRadiusPx,
+        yPx: projectedY * radarRadiusPx,
+        altitudePx,
+        isAbove: altitude > 0,
+      });
+    }
+  }
+
   return (
     <main className="page">
       <h1>Cosmos Multiplayer</h1>
@@ -1095,6 +1151,34 @@ export function App() {
           <div className={`crosshair ${isCrosshairHot ? "hot" : ""}`} aria-hidden="true" />
           {isSelfDestroyed ? <div className="death-overlay" aria-hidden="true" /> : null}
           {damageFlashId > 0 ? <div key={damageFlashId} className="damage-flash-overlay" aria-hidden="true" /> : null}
+          <div className="radar" aria-hidden="true">
+            <div className="radar-forward-marker" />
+            <div className="radar-ring radar-ring-inner" />
+            <div className="radar-ring radar-ring-outer" />
+            <div className="radar-axis radar-axis-x" />
+            <div className="radar-axis radar-axis-y" />
+            <div className="radar-center-dot" />
+            {radarContacts.map((contact) => {
+              return (
+                <div
+                  key={contact.id}
+                  className="radar-contact"
+                  style={{
+                    left: `${radarRadiusPx + contact.xPx}px`,
+                    top: `${radarRadiusPx - contact.yPx}px`,
+                  }}
+                >
+                  <div className="radar-contact-dot" />
+                  {contact.altitudePx >= radarHeightEpsilon ? (
+                    <div
+                      className={`radar-altitude ${contact.isAbove ? "radar-altitude-up" : "radar-altitude-down"}`}
+                      style={{ height: `${contact.altitudePx}px` }}
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
           <div className="hud-stats" aria-hidden="true">
             <div className="hud-stat-line">HP {Math.round(selfHealth)}</div>
             <div className="hud-stat-line">Rockets {selfMissileAmmo}</div>
