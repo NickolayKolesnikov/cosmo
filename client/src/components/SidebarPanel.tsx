@@ -25,6 +25,8 @@ export const SidebarPanel = ({
   onCreateRoom,
   onJoinRoom,
 }: SidebarPanelProps_t) => {
+  const roomPlayerById = new Map(world.players.map((player) => [player.id, player]));
+
   return (
     <aside className="sidebar">
       <h1>Cosmos Multiplayer</h1>
@@ -76,9 +78,11 @@ export const SidebarPanel = ({
           Current room: <strong>{world.roomName ?? "No room selected"}</strong>
         </p>
         <ul>
-          {world.roomPlayerIds.map((id) => (
-            <li key={id}>{id === playerId ? `${id} (you)` : id}</li>
-          ))}
+          {world.roomPlayerIds.map((id) => {
+            const playerState = roomPlayerById.get(id);
+            const kdText = playerState ? `${playerState.killed}/${playerState.dead} killed/dead` : "0/0 killed/dead";
+            return <li key={id}>{id === playerId ? `${id} (you) - ${kdText}` : `${id} - ${kdText}`}</li>;
+          })}
         </ul>
       </section>
     </aside>

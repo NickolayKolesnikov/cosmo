@@ -54,6 +54,7 @@ const initialMissileAmmo = 5;
 const missileSpeed = 5.2;
 const transportSpeed = 1.45;
 const transportsPerRoom = 5;
+const botsPerRoom = 3;
 const transportAggroRange = 360;
 const transportAttackCooldownMs = 334;
 const transportProjectileLifetimeTicks = tickRateHz * 3;
@@ -82,6 +83,7 @@ const wss = new WebSocketServer({ server: httpServer });
 
 const clients = new Map<PlayerId_t, Client_t>();
 const players = new Map<PlayerId_t, PlayerState_t>();
+const playerVelocityById = new Map<PlayerId_t, { x: number; y: number; z: number }>();
 const orientationByPlayerId = new Map<PlayerId_t, Quaternion_t>();
 const inputs = new Map<PlayerId_t, InputState_t>();
 const rooms = new Map<RoomId_t, Room_t>();
@@ -93,10 +95,13 @@ const supplyCubes = new Map<string, SupplyCube_t>();
 const transports = new Map<string, Transport_t>();
 const lastShotAtMsByPlayer = new Map<PlayerId_t, number>();
 const lastHomingAtMsByPlayer = new Map<PlayerId_t, number>();
+const lastBotShotAtMsByPlayer = new Map<PlayerId_t, number>();
+const botPlayerIds = new Set<PlayerId_t>();
 const respawnTimerByPlayer = new Map<PlayerId_t, ReturnType<typeof setTimeout>>();
 
 const simulationState: SimulationState_t = {
   players,
+  playerVelocityById,
   orientationByPlayerId,
   inputs,
   playerRoomById,
@@ -105,6 +110,8 @@ const simulationState: SimulationState_t = {
   explosions,
   supplyCubes,
   transports,
+  botPlayerIds,
+  lastBotShotAtMsByPlayer,
   respawnTimerByPlayer,
 };
 
@@ -134,6 +141,7 @@ const simulationSettings: SimulationSettings_t = {
   transportAttackCooldownMs,
   transportProjectileLifetimeTicks,
   projectileSpawnOffset,
+  projectileLifetimeTicks,
   supplyCubeTypes,
 };
 
@@ -145,6 +153,10 @@ const roomState: RoomManagerState_t = {
   explosions,
   supplyCubes,
   transports,
+  players,
+  inputs,
+  orientationByPlayerId,
+  botPlayerIds,
 };
 
 const randomSpawn = (): { x: number; y: number; z: number } => randomSpawnPosition(worldHalfExtent);
@@ -189,10 +201,43 @@ const createPlayerState = (playerId: PlayerId_t): PlayerState_t => {
     projectileAmmo: initialProjectileAmmo,
     missileAmmo: initialMissileAmmo,
     isAlive: true,
+    killed: 0,
+    dead: 0,
     color: `hsl(${Math.floor(Math.random() * 360)} 80% 55%)`,
   };
   state.orientation = quaternionFromEulerYXZ(state.pitch, state.yaw, state.roll);
   return state;
+};
+
+const createBotPlayerState = (botId: PlayerId_t): PlayerState_t => {
+  const state = createPlayerState(botId);
+  state.color = "hsl(38 88% 56%)";
+  return state;
+};
+
+const ensureBotForRoom = (roomId: RoomId_t): void => {
+  const room = rooms.get(roomId);
+  if (!room) {
+    return;
+  }
+
+  let botsInRoom = 0;
+  for (const roomPlayerId of room.playerIds) {
+    if (botPlayerIds.has(roomPlayerId)) {
+      botsInRoom += 1;
+    }
+  }
+
+  for (let i = botsInRoom; i < botsPerRoom; i += 1) {
+    const botId = `bot-${randomUUID().slice(0, 8)}`;
+    const botState = createBotPlayerState(botId);
+    players.set(botId, botState);
+    orientationByPlayerId.set(botId, botState.orientation);
+    inputs.set(botId, { forward: 0, strafe: 0 });
+    playerRoomById.set(botId, null);
+    botPlayerIds.add(botId);
+    joinRoom(botId, roomId, roomState);
+  }
 };
 
 wss.on("connection", (socket) => {
@@ -354,6 +399,7 @@ wss.on("connection", (socket) => {
       });
       const createdRoomId = playerRoomById.get(playerId);
       if (createdRoomId) {
+        ensureBotForRoom(createdRoomId);
         for (let i = 0; i < transportsPerRoom; i += 1) {
           spawnTransportForRoom({
             roomId: createdRoomId,
@@ -374,6 +420,8 @@ wss.on("connection", (socket) => {
         sendWorldToPlayer(playerId);
         return;
       }
+
+      ensureBotForRoom(message.roomId);
 
       broadcastWorld();
       return;
@@ -398,11 +446,16 @@ wss.on("connection", (socket) => {
     leaveCurrentRoom(playerId, roomState);
     playerRoomById.delete(playerId);
     inputs.delete(playerId);
+    playerVelocityById.delete(playerId);
     orientationByPlayerId.delete(playerId);
     lastShotAtMsByPlayer.delete(playerId);
     lastHomingAtMsByPlayer.delete(playerId);
     clients.delete(playerId);
     players.delete(playerId);
+    if (botPlayerIds.has(playerId)) {
+      botPlayerIds.delete(playerId);
+      lastBotShotAtMsByPlayer.delete(playerId);
+    }
     broadcastWorld();
   });
 });

@@ -22,6 +22,7 @@ import {
   randomSpawnPosition,
   rotateVectorByQuaternion,
 } from "./math.js";
+import { tickBotPlayer } from "./botLogic.js";
 import type { Room_t } from "./roomManager.js";
 
 export type InputState_t = {
@@ -58,6 +59,7 @@ export type Transport_t = TransportState_t & {
 
 export type SimulationState_t = {
   players: Map<PlayerId_t, PlayerState_t>;
+  playerVelocityById: Map<PlayerId_t, Vec3_t>;
   orientationByPlayerId: Map<PlayerId_t, Quaternion_t>;
   inputs: Map<PlayerId_t, InputState_t>;
   playerRoomById: Map<PlayerId_t, RoomId_t | null>;
@@ -66,6 +68,8 @@ export type SimulationState_t = {
   explosions: Map<string, Explosion_t>;
   supplyCubes: Map<string, SupplyCube_t>;
   transports: Map<string, Transport_t>;
+  botPlayerIds: Set<PlayerId_t>;
+  lastBotShotAtMsByPlayer: Map<PlayerId_t, number>;
   respawnTimerByPlayer: Map<PlayerId_t, ReturnType<typeof setTimeout>>;
 };
 
@@ -105,6 +109,7 @@ export type SimulationSettings_t = {
   transportAttackCooldownMs: number;
   transportProjectileLifetimeTicks: number;
   projectileSpawnOffset: number;
+  projectileLifetimeTicks: number;
   supplyCubeTypes: SupplyCubeType_t[];
 };
 
@@ -466,10 +471,20 @@ const handlePlayerDestroyed = (
   roomId: RoomId_t,
   target: PlayerState_t,
   state: SimulationState_t,
-  settings: SimulationSettings_t
+  settings: SimulationSettings_t,
+  attackerPlayerId: PlayerId_t | null = null
 ): void => {
   target.health = 0;
   target.isAlive = false;
+  target.dead += 1;
+
+  if (attackerPlayerId && attackerPlayerId !== target.id) {
+    const attacker = state.players.get(attackerPlayerId);
+    if (attacker) {
+      attacker.killed += 1;
+    }
+  }
+
   state.inputs.set(target.id, { forward: 0, strafe: 0 });
   spawnExplosion(roomId, target.position, state, settings);
   scheduleRespawn(target.id, state, settings);
@@ -693,7 +708,7 @@ const applyDamageToDamageable = (
 
     player.health = clamp(player.health - damage, 0, settings.maxHealth);
     if (player.health <= 0) {
-      handlePlayerDestroyed(damageable.roomId, player, state, settings);
+      handlePlayerDestroyed(damageable.roomId, player, state, settings, attackerPlayerId);
     }
     return;
   }
@@ -724,7 +739,31 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
     return clamp(value, -settings.worldHalfExtent, settings.worldHalfExtent);
   };
 
+  const previousPositionByPlayerId = new Map<PlayerId_t, Vec3_t>();
+  for (const [playerId, player] of state.players.entries()) {
+    previousPositionByPlayerId.set(playerId, {
+      x: player.position.x,
+      y: player.position.y,
+      z: player.position.z,
+    });
+  }
+
+  const nowMs = Date.now();
+  for (const botId of state.botPlayerIds.values()) {
+    const botState = state.players.get(botId);
+    const roomId = state.playerRoomById.get(botId);
+    if (!botState || !roomId || !botState.isAlive) {
+      continue;
+    }
+
+    tickBotPlayer(botId, botState, roomId, state, settings, nowMs);
+  }
+
   for (const [playerId, playerState] of state.players.entries()) {
+    if (state.botPlayerIds.has(playerId)) {
+      continue;
+    }
+
     const roomId = state.playerRoomById.get(playerId);
     if (!roomId || !playerState.isAlive) {
       continue;
@@ -997,7 +1036,6 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
     scheduleTransportRespawn(transport.roomId, state, settings);
   }
 
-  const nowMs = Date.now();
   for (const transport of state.transports.values()) {
     transportTryShootAtAttackers(transport, state, settings, nowMs);
   }
@@ -1044,6 +1082,25 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
         applyDamageToDamageable(first, collisionDamage, state, settings);
         applyDamageToDamageable(second, collisionDamage, state, settings);
       }
+    }
+  }
+
+  for (const [playerId, player] of state.players.entries()) {
+    const previous = previousPositionByPlayerId.get(playerId);
+    if (!previous) {
+      continue;
+    }
+
+    state.playerVelocityById.set(playerId, {
+      x: player.position.x - previous.x,
+      y: player.position.y - previous.y,
+      z: player.position.z - previous.z,
+    });
+  }
+
+  for (const velocityPlayerId of state.playerVelocityById.keys()) {
+    if (!state.players.has(velocityPlayerId)) {
+      state.playerVelocityById.delete(velocityPlayerId);
     }
   }
 };

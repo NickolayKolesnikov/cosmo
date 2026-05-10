@@ -1,4 +1,4 @@
-import type { Quaternion_t, Vec3_t } from "@cosmos/shared";
+import type { PlayerState_t, Quaternion_t, Vec3_t } from "@cosmos/shared";
 
 export const clamp = (value: number, min: number, max: number): number => {
   if (value < min) {
@@ -97,4 +97,16 @@ export const mixDirections = (a: Vec3_t, b: Vec3_t, lerp: number): Vec3_t => {
     y: a.y * (1 - t) + b.y * t,
     z: a.z * (1 - t) + b.z * t,
   };
+};
+
+export const movePlayerToward = (
+  player: PlayerState_t,
+  direction: Vec3_t,
+  moveSpeed: number,
+  worldHalfExtent: number
+): void => {
+  const normalized = normalizeVector(direction);
+  player.position.x = clamp(player.position.x + normalized.x * moveSpeed, -worldHalfExtent, worldHalfExtent);
+  player.position.y = clamp(player.position.y + normalized.y * moveSpeed, -worldHalfExtent, worldHalfExtent);
+  player.position.z = clamp(player.position.z + normalized.z * moveSpeed, -worldHalfExtent, worldHalfExtent);
 };

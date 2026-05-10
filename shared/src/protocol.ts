@@ -27,6 +27,8 @@ export type PlayerState_t = {
   projectileAmmo: number;
   missileAmmo: number;
   isAlive: boolean;
+  killed: number;
+  dead: number;
   color: string;
 };
 

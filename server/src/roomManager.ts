@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type {
   PlayerId_t,
+  PlayerState_t,
+  Quaternion_t,
   RoomId_t,
   SupplyCubeType_t,
 } from "@cosmos/shared";
@@ -27,6 +29,10 @@ export type RoomManagerState_t = {
   explosions: Map<string, Explosion_t>;
   supplyCubes: Map<string, SupplyCube_t>;
   transports: Map<string, Transport_t>;
+  players: Map<PlayerId_t, PlayerState_t>;
+  inputs: Map<PlayerId_t, { forward: number; strafe: number }>;
+  orientationByPlayerId: Map<PlayerId_t, Quaternion_t>;
+  botPlayerIds: Set<PlayerId_t>;
 };
 
 export const leaveCurrentRoom = (playerId: PlayerId_t, state: RoomManagerState_t): void => {
@@ -56,7 +62,8 @@ export const leaveCurrentRoom = (playerId: PlayerId_t, state: RoomManagerState_t
     }
   }
 
-  if (room.playerIds.size === 0) {
+  const hasHumanPlayers = [...room.playerIds].some((id) => !state.botPlayerIds.has(id));
+  if (!hasHumanPlayers) {
     for (const [missileId, missile] of state.missiles.entries()) {
       if (missile.roomId === roomId) {
         state.missiles.delete(missileId);
@@ -79,6 +86,18 @@ export const leaveCurrentRoom = (playerId: PlayerId_t, state: RoomManagerState_t
       if (transport.roomId === roomId) {
         state.transports.delete(transportId);
       }
+    }
+
+    for (const roomPlayerId of room.playerIds) {
+      if (!state.botPlayerIds.has(roomPlayerId)) {
+        continue;
+      }
+
+      state.playerRoomById.set(roomPlayerId, null);
+      state.players.delete(roomPlayerId);
+      state.inputs.delete(roomPlayerId);
+      state.orientationByPlayerId.delete(roomPlayerId);
+      state.botPlayerIds.delete(roomPlayerId);
     }
 
     state.rooms.delete(roomId);
