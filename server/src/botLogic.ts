@@ -271,12 +271,61 @@ const tryBotEvasion = (
   bot: PlayerState_t,
   roomId: RoomId_t,
   state: SimulationState_t,
-  settings: SimulationSettings_t
+  settings: SimulationSettings_t,
+  target: CombatTarget_t | null,
+  nowMs: number
 ): boolean => {
   const evadeDirection =
     getMissileEvasionDirection(botId, roomId, bot, state) ?? getProjectileEvasionDirection(botId, roomId, bot, state);
   if (!evadeDirection) {
     return false;
+  }
+
+  if (target) {
+    const toEnemy = {
+      x: target.position.x - bot.position.x,
+      y: target.position.y - bot.position.y,
+      z: target.position.z - bot.position.z,
+    };
+    const distanceSq = toEnemy.x * toEnemy.x + toEnemy.y * toEnemy.y + toEnemy.z * toEnemy.z;
+    if (distanceSq > 0.0001) {
+      const toEnemyNormalized = normalizeVector(toEnemy);
+      const leadDirection = getInterceptDirection(bot.position, target.position, target.velocity, settings.projectileSpeed);
+
+      const minStandoffDistance = settings.botMinStandoffDistance;
+      const preferredDistance = settings.botPreferredDistance;
+      const attackDistance = settings.botAttackDistance;
+      const minStandoffSq = minStandoffDistance * minStandoffDistance;
+      const preferredDistanceSq = preferredDistance * preferredDistance;
+      const attackDistanceSq = attackDistance * attackDistance;
+
+      const radialCorrection =
+        distanceSq < minStandoffSq
+          ? { x: -toEnemyNormalized.x, y: -toEnemyNormalized.y, z: -toEnemyNormalized.z }
+          : distanceSq > preferredDistanceSq
+            ? toEnemyNormalized
+            : { x: 0, y: 0, z: 0 };
+
+      let strafeDirection = cross(toEnemyNormalized, evadeDirection);
+      const strafeLengthSq =
+        strafeDirection.x * strafeDirection.x + strafeDirection.y * strafeDirection.y + strafeDirection.z * strafeDirection.z;
+      if (strafeLengthSq <= 0.0001) {
+        strafeDirection = cross(toEnemyNormalized, { x: 0, y: 1, z: 0 });
+      }
+
+      const moveDirection = normalizeVector({
+        x: evadeDirection.x * 0.9 + strafeDirection.x * 1.0 + radialCorrection.x * 0.7,
+        y: evadeDirection.y * 0.7 + strafeDirection.y * 0.8 + radialCorrection.y * 0.4,
+        z: evadeDirection.z * 0.9 + strafeDirection.z * 1.0 + radialCorrection.z * 0.7,
+      });
+
+      setPlayerFacingDirection(botId, bot, leadDirection, state);
+      movePlayerToward(bot, moveDirection, settings.moveSpeed, settings.worldHalfExtent);
+      if (distanceSq <= attackDistanceSq) {
+        botTryShootProjectile(botId, roomId, bot, state, settings, nowMs);
+      }
+      return true;
+    }
   }
 
   setPlayerFacingDirection(botId, bot, evadeDirection, state);
@@ -390,7 +439,9 @@ export const tickBotPlayer = (
   settings: SimulationSettings_t,
   nowMs: number
 ): void => {
-  if (tryBotEvasion(botId, bot, roomId, state, settings)) {
+  const enemy = getNearestCombatTarget(botId, roomId, bot.position, state, settings);
+
+  if (tryBotEvasion(botId, bot, roomId, state, settings, enemy, nowMs)) {
     return;
   }
 
@@ -411,7 +462,6 @@ export const tickBotPlayer = (
     return;
   }
 
-  const enemy = getNearestCombatTarget(botId, roomId, bot.position, state, settings);
   if (!enemy) {
     return;
   }
