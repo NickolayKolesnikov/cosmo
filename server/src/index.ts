@@ -61,6 +61,8 @@ const transportProjectileLifetimeTicks = tickRateHz * 3;
 const botMinStandoffDistance = 45;
 const botPreferredDistance = 85;
 const botAttackDistance = 110;
+const botMaxYawTurnPerTick = 0.11;
+const botMaxPitchTurnPerTick = 0.07;
 const missileLifetimeTicks = tickRateHz * 6;
 const missileTurnLerp = 0.18;
 const missileLeadMaxTicks = tickRateHz * 1.25;
@@ -154,6 +156,8 @@ const simulationSettings: SimulationSettings_t = {
   botMinStandoffDistance,
   botPreferredDistance,
   botAttackDistance,
+  botMaxYawTurnPerTick,
+  botMaxPitchTurnPerTick,
   supplyCubeTypes,
 };
 

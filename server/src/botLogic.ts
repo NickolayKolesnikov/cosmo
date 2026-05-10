@@ -11,6 +11,18 @@ type CombatTarget_t = {
   velocity: Vec3_t;
 };
 
+const normalizeAngle = (angle: number): number => {
+  const fullTurn = Math.PI * 2;
+  const wrapped = (angle + Math.PI) % fullTurn;
+  const positiveWrapped = wrapped < 0 ? wrapped + fullTurn : wrapped;
+  return positiveWrapped - Math.PI;
+};
+
+const approachAngle = (current: number, target: number, maxDelta: number): number => {
+  const delta = normalizeAngle(target - current);
+  return current + clamp(delta, -maxDelta, maxDelta);
+};
+
 const getBotDeficitType = (player: PlayerState_t, settings: SimulationSettings_t): BotDeficit_t | null => {
   const healthRatio = player.health / settings.maxHealth;
   const projectileRatio = player.projectileAmmo / settings.initialProjectileAmmo;
@@ -139,17 +151,22 @@ const setPlayerFacingDirection = (
   playerId: PlayerId_t,
   player: PlayerState_t,
   direction: Vec3_t,
-  state: SimulationState_t
+  state: SimulationState_t,
+  settings: SimulationSettings_t
 ): void => {
   const normalized = normalizeVector(direction);
   if (normalized.x === 0 && normalized.y === 0 && normalized.z === 0) {
     return;
   }
 
-  const yaw = Math.atan2(-normalized.x, -normalized.z);
-  const pitch = Math.asin(clamp(normalized.y, -1, 1));
-  player.yaw = yaw;
-  player.pitch = pitch;
+  const targetYaw = Math.atan2(-normalized.x, -normalized.z);
+  const targetPitch = Math.asin(clamp(normalized.y, -1, 1));
+  player.yaw = approachAngle(player.yaw, targetYaw, settings.botMaxYawTurnPerTick);
+  player.pitch = clamp(
+    approachAngle(player.pitch, targetPitch, settings.botMaxPitchTurnPerTick),
+    -Math.PI / 2,
+    Math.PI / 2
+  );
   player.roll = 0;
   player.orientation = quaternionFromEulerYXZ(player.pitch, player.yaw, player.roll);
   state.orientationByPlayerId.set(playerId, player.orientation);
@@ -161,6 +178,37 @@ const cross = (a: Vec3_t, b: Vec3_t): Vec3_t => {
     y: a.z * b.x - a.x * b.z,
     z: a.x * b.y - a.y * b.x,
   };
+};
+
+const dot = (a: Vec3_t, b: Vec3_t): number => {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+};
+
+const moveBotNoBackward = (
+  bot: PlayerState_t,
+  desiredDirection: Vec3_t,
+  settings: SimulationSettings_t
+): void => {
+  const forward = normalizeVector(rotateVectorByQuaternion({ x: 0, y: 0, z: -1 }, bot.orientation));
+  const right = normalizeVector(rotateVectorByQuaternion({ x: 1, y: 0, z: 0 }, bot.orientation));
+  const desired = normalizeVector(desiredDirection);
+  const forwardFactor = dot(forward, desired);
+  const clampedForward = Math.max(0, forwardFactor);
+  const strafeFactor = dot(right, desired);
+
+  const moveVector = {
+    x: forward.x * clampedForward + right.x * strafeFactor,
+    y: forward.y * clampedForward + right.y * strafeFactor,
+    z: forward.z * clampedForward + right.z * strafeFactor,
+  };
+  const moveMagnitude = Math.sqrt(
+    moveVector.x * moveVector.x + moveVector.y * moveVector.y + moveVector.z * moveVector.z
+  );
+  if (moveMagnitude <= 0.0001) {
+    return;
+  }
+
+  movePlayerToward(bot, moveVector, settings.moveSpeed * clamp(moveMagnitude, 0, 1), settings.worldHalfExtent);
 };
 
 const getMissileEvasionDirection = (
@@ -289,38 +337,14 @@ const tryBotEvasion = (
     };
     const distanceSq = toEnemy.x * toEnemy.x + toEnemy.y * toEnemy.y + toEnemy.z * toEnemy.z;
     if (distanceSq > 0.0001) {
-      const toEnemyNormalized = normalizeVector(toEnemy);
       const leadDirection = getInterceptDirection(bot.position, target.position, target.velocity, settings.projectileSpeed);
 
-      const minStandoffDistance = settings.botMinStandoffDistance;
-      const preferredDistance = settings.botPreferredDistance;
       const attackDistance = settings.botAttackDistance;
-      const minStandoffSq = minStandoffDistance * minStandoffDistance;
-      const preferredDistanceSq = preferredDistance * preferredDistance;
       const attackDistanceSq = attackDistance * attackDistance;
 
-      const radialCorrection =
-        distanceSq < minStandoffSq
-          ? { x: -toEnemyNormalized.x, y: -toEnemyNormalized.y, z: -toEnemyNormalized.z }
-          : distanceSq > preferredDistanceSq
-            ? toEnemyNormalized
-            : { x: 0, y: 0, z: 0 };
-
-      let strafeDirection = cross(toEnemyNormalized, evadeDirection);
-      const strafeLengthSq =
-        strafeDirection.x * strafeDirection.x + strafeDirection.y * strafeDirection.y + strafeDirection.z * strafeDirection.z;
-      if (strafeLengthSq <= 0.0001) {
-        strafeDirection = cross(toEnemyNormalized, { x: 0, y: 1, z: 0 });
-      }
-
-      const moveDirection = normalizeVector({
-        x: evadeDirection.x * 0.9 + strafeDirection.x * 1.0 + radialCorrection.x * 0.7,
-        y: evadeDirection.y * 0.7 + strafeDirection.y * 0.8 + radialCorrection.y * 0.4,
-        z: evadeDirection.z * 0.9 + strafeDirection.z * 1.0 + radialCorrection.z * 0.7,
-      });
-
-      setPlayerFacingDirection(botId, bot, leadDirection, state);
-      movePlayerToward(bot, moveDirection, settings.moveSpeed, settings.worldHalfExtent);
+      setPlayerFacingDirection(botId, bot, evadeDirection, state, settings);
+      moveBotNoBackward(bot, evadeDirection, settings);
+      setPlayerFacingDirection(botId, bot, leadDirection, state, settings);
       if (distanceSq <= attackDistanceSq) {
         botTryShootProjectile(botId, roomId, bot, state, settings, nowMs);
       }
@@ -328,8 +352,8 @@ const tryBotEvasion = (
     }
   }
 
-  setPlayerFacingDirection(botId, bot, evadeDirection, state);
-  movePlayerToward(bot, evadeDirection, settings.moveSpeed, settings.worldHalfExtent);
+  setPlayerFacingDirection(botId, bot, evadeDirection, state, settings);
+  moveBotNoBackward(bot, evadeDirection, settings);
   return true;
 };
 
@@ -457,8 +481,8 @@ export const tickBotPlayer = (
       y: targetCube.position.y - bot.position.y,
       z: targetCube.position.z - bot.position.z,
     };
-    setPlayerFacingDirection(botId, bot, toCube, state);
-    movePlayerToward(bot, toCube, settings.moveSpeed, settings.worldHalfExtent);
+    setPlayerFacingDirection(botId, bot, toCube, state, settings);
+    moveBotNoBackward(bot, toCube, settings);
     return;
   }
 
@@ -487,16 +511,16 @@ export const tickBotPlayer = (
 
   if (distanceSq < minStandoffSq) {
     const awayFromEnemy = { x: -toEnemy.x, y: -toEnemy.y, z: -toEnemy.z };
-    setPlayerFacingDirection(botId, bot, toEnemy, state);
-    movePlayerToward(bot, awayFromEnemy, settings.moveSpeed, settings.worldHalfExtent);
+    setPlayerFacingDirection(botId, bot, awayFromEnemy, state, settings);
+    moveBotNoBackward(bot, awayFromEnemy, settings);
   } else if (distanceSq > preferredDistanceSq) {
-    setPlayerFacingDirection(botId, bot, toEnemy, state);
-    movePlayerToward(bot, toEnemy, settings.moveSpeed, settings.worldHalfExtent);
+    setPlayerFacingDirection(botId, bot, toEnemy, state, settings);
+    moveBotNoBackward(bot, toEnemy, settings);
   } else {
-    setPlayerFacingDirection(botId, bot, toEnemy, state);
+    setPlayerFacingDirection(botId, bot, toEnemy, state, settings);
   }
 
-  setPlayerFacingDirection(botId, bot, leadDirection, state);
+  setPlayerFacingDirection(botId, bot, leadDirection, state, settings);
 
   if (distanceSq <= attackDistanceSq) {
     botTryShootProjectile(botId, roomId, bot, state, settings, nowMs);

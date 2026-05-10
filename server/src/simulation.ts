@@ -116,6 +116,8 @@ export type SimulationSettings_t = {
   botMinStandoffDistance: number;
   botPreferredDistance: number;
   botAttackDistance: number;
+  botMaxYawTurnPerTick: number;
+  botMaxPitchTurnPerTick: number;
   supplyCubeTypes: SupplyCubeType_t[];
 };
 
