@@ -390,10 +390,12 @@ export const tickBotPlayer = (
     return;
   }
 
-  const minStandoffDistance = 70;
-  const preferredDistance = 150;
+  const minStandoffDistance = settings.botMinStandoffDistance;
+  const preferredDistance = settings.botPreferredDistance;
+  const attackDistance = settings.botAttackDistance;
   const minStandoffSq = minStandoffDistance * minStandoffDistance;
   const preferredDistanceSq = preferredDistance * preferredDistance;
+  const attackDistanceSq = attackDistance * attackDistance;
 
   if (distanceSq < minStandoffSq) {
     const awayFromEnemy = { x: -toEnemy.x, y: -toEnemy.y, z: -toEnemy.z };
@@ -408,5 +410,7 @@ export const tickBotPlayer = (
 
   setPlayerFacingDirection(botId, bot, leadDirection, state);
 
-  botTryShootProjectile(botId, roomId, bot, state, settings, nowMs);
+  if (distanceSq <= attackDistanceSq) {
+    botTryShootProjectile(botId, roomId, bot, state, settings, nowMs);
+  }
 };

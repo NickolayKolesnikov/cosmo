@@ -110,6 +110,9 @@ export type SimulationSettings_t = {
   transportProjectileLifetimeTicks: number;
   projectileSpawnOffset: number;
   projectileLifetimeTicks: number;
+  botMinStandoffDistance: number;
+  botPreferredDistance: number;
+  botAttackDistance: number;
   supplyCubeTypes: SupplyCubeType_t[];
 };
 

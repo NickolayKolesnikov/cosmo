@@ -58,6 +58,9 @@ const botsPerRoom = 3;
 const transportAggroRange = 360;
 const transportAttackCooldownMs = 334;
 const transportProjectileLifetimeTicks = tickRateHz * 3;
+const botMinStandoffDistance = 45;
+const botPreferredDistance = 85;
+const botAttackDistance = 110;
 const missileLifetimeTicks = tickRateHz * 6;
 const missileTurnLerp = 0.18;
 const explosionLifetimeTicks = Math.floor(tickRateHz * 0.6);
@@ -142,6 +145,9 @@ const simulationSettings: SimulationSettings_t = {
   transportProjectileLifetimeTicks,
   projectileSpawnOffset,
   projectileLifetimeTicks,
+  botMinStandoffDistance,
+  botPreferredDistance,
+  botAttackDistance,
   supplyCubeTypes,
 };
 
