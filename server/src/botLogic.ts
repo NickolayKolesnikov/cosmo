@@ -4,6 +4,12 @@ import { clamp, movePlayerToward, normalizeVector, quaternionFromEulerYXZ, rotat
 import type { SimulationSettings_t, SimulationState_t, SupplyCube_t } from "./simulation.js";
 
 type BotDeficit_t = "health" | "projectile_ammo" | "missile_ammo";
+type CombatTarget_t = {
+  kind: "player" | "transport";
+  id: string;
+  position: Vec3_t;
+  velocity: Vec3_t;
+};
 
 const getBotDeficitType = (player: PlayerState_t, settings: SimulationSettings_t): BotDeficit_t | null => {
   const healthRatio = player.health / settings.maxHealth;
@@ -64,13 +70,14 @@ const getNearestSupplyCube = (
   return nearestPreferred ?? nearestAny;
 };
 
-const getNearestEnemyPlayer = (
+const getNearestCombatTarget = (
   botId: PlayerId_t,
   roomId: RoomId_t,
   origin: Vec3_t,
-  state: SimulationState_t
-): PlayerState_t | null => {
-  let nearest: PlayerState_t | null = null;
+  state: SimulationState_t,
+  settings: SimulationSettings_t
+): CombatTarget_t | null => {
+  let nearest: CombatTarget_t | null = null;
   let nearestDistanceSq = Number.POSITIVE_INFINITY;
 
   for (const enemy of state.players.values()) {
@@ -91,7 +98,38 @@ const getNearestEnemyPlayer = (
     }
 
     nearestDistanceSq = distanceSq;
-    nearest = enemy;
+    nearest = {
+      kind: "player",
+      id: enemy.id,
+      position: enemy.position,
+      velocity: state.playerVelocityById.get(enemy.id) ?? { x: 0, y: 0, z: 0 },
+    };
+  }
+
+  for (const transport of state.transports.values()) {
+    if (transport.roomId !== roomId || transport.health <= 0) {
+      continue;
+    }
+
+    const dx = transport.position.x - origin.x;
+    const dy = transport.position.y - origin.y;
+    const dz = transport.position.z - origin.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+    if (distanceSq >= nearestDistanceSq) {
+      continue;
+    }
+
+    nearestDistanceSq = distanceSq;
+    nearest = {
+      kind: "transport",
+      id: transport.id,
+      position: transport.position,
+      velocity: {
+        x: transport.velocity.x * settings.transportSpeed,
+        y: transport.velocity.y * settings.transportSpeed,
+        z: transport.velocity.z * settings.transportSpeed,
+      },
+    };
   }
 
   return nearest;
@@ -373,7 +411,7 @@ export const tickBotPlayer = (
     return;
   }
 
-  const enemy = getNearestEnemyPlayer(botId, roomId, bot.position, state);
+  const enemy = getNearestCombatTarget(botId, roomId, bot.position, state, settings);
   if (!enemy) {
     return;
   }
@@ -383,7 +421,7 @@ export const tickBotPlayer = (
     y: enemy.position.y - bot.position.y,
     z: enemy.position.z - bot.position.z,
   };
-  const enemyVelocity = state.playerVelocityById.get(enemy.id) ?? { x: 0, y: 0, z: 0 };
+  const enemyVelocity = enemy.velocity;
   const leadDirection = getInterceptDirection(bot.position, enemy.position, enemyVelocity, settings.projectileSpeed);
   const distanceSq = toEnemy.x * toEnemy.x + toEnemy.y * toEnemy.y + toEnemy.z * toEnemy.z;
   if (distanceSq <= 0.0001) {
