@@ -63,6 +63,9 @@ const botPreferredDistance = 85;
 const botAttackDistance = 110;
 const missileLifetimeTicks = tickRateHz * 6;
 const missileTurnLerp = 0.18;
+const missileLeadMaxTicks = tickRateHz * 1.25;
+const missileProjectileEvasionRadius = 90;
+const missileProjectileEvasionStrength = 0.5;
 const explosionLifetimeTicks = Math.floor(tickRateHz * 0.6);
 const shootCooldownMs = 180;
 const homingCooldownMs = 1200;
@@ -128,6 +131,9 @@ const simulationSettings: SimulationSettings_t = {
   missileDamage,
   missileSpeed,
   missileTurnLerp,
+  missileLeadMaxTicks,
+  missileProjectileEvasionRadius,
+  missileProjectileEvasionStrength,
   transportSpeed,
   playerCollisionRadius,
   transportCollisionRadius,

@@ -110,6 +110,9 @@ export type SimulationSettings_t = {
   transportProjectileLifetimeTicks: number;
   projectileSpawnOffset: number;
   projectileLifetimeTicks: number;
+  missileLeadMaxTicks: number;
+  missileProjectileEvasionRadius: number;
+  missileProjectileEvasionStrength: number;
   botMinStandoffDistance: number;
   botPreferredDistance: number;
   botAttackDistance: number;
@@ -673,14 +676,21 @@ const transportTryShootAtAttackers = (
   transport.lastAttackShotAtMs = nowMs;
 };
 
-const getMissileTargetPosition = (missile: Missile_t, state: SimulationState_t): Vec3_t | null => {
+const getMissileTargetState = (
+  missile: Missile_t,
+  state: SimulationState_t,
+  settings: SimulationSettings_t
+): { position: Vec3_t; velocity: Vec3_t } | null => {
   if (missile.targetKind === "player") {
     const targetPlayer = state.players.get(missile.targetId as PlayerId_t);
     if (!targetPlayer || !targetPlayer.isAlive || state.playerRoomById.get(targetPlayer.id) !== missile.roomId) {
       return null;
     }
 
-    return targetPlayer.position;
+    return {
+      position: targetPlayer.position,
+      velocity: state.playerVelocityById.get(targetPlayer.id) ?? { x: 0, y: 0, z: 0 },
+    };
   }
 
   const targetTransport = state.transports.get(missile.targetId);
@@ -688,7 +698,143 @@ const getMissileTargetPosition = (missile: Missile_t, state: SimulationState_t):
     return null;
   }
 
-  return targetTransport.position;
+  return {
+    position: targetTransport.position,
+    velocity: {
+      x: targetTransport.velocity.x * settings.transportSpeed,
+      y: targetTransport.velocity.y * settings.transportSpeed,
+      z: targetTransport.velocity.z * settings.transportSpeed,
+    },
+  };
+};
+
+const cross = (a: Vec3_t, b: Vec3_t): Vec3_t => {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+};
+
+const getMissileLeadDirection = (
+  missilePosition: Vec3_t,
+  targetPosition: Vec3_t,
+  targetVelocity: Vec3_t,
+  projectileSpeed: number,
+  maxLeadTicks: number
+): Vec3_t => {
+  const toTarget = {
+    x: targetPosition.x - missilePosition.x,
+    y: targetPosition.y - missilePosition.y,
+    z: targetPosition.z - missilePosition.z,
+  };
+
+  const speedSq = projectileSpeed * projectileSpeed;
+  const targetSpeedSq =
+    targetVelocity.x * targetVelocity.x + targetVelocity.y * targetVelocity.y + targetVelocity.z * targetVelocity.z;
+  const a = targetSpeedSq - speedSq;
+  const b = 2 * (toTarget.x * targetVelocity.x + toTarget.y * targetVelocity.y + toTarget.z * targetVelocity.z);
+  const c = toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z;
+
+  let interceptTime = Number.POSITIVE_INFINITY;
+  if (Math.abs(a) <= 0.000001) {
+    if (Math.abs(b) > 0.000001) {
+      const t = -c / b;
+      if (t > 0) {
+        interceptTime = t;
+      }
+    }
+  } else {
+    const discriminant = b * b - 4 * a * c;
+    if (discriminant >= 0) {
+      const sqrtDiscriminant = Math.sqrt(discriminant);
+      const t1 = (-b - sqrtDiscriminant) / (2 * a);
+      const t2 = (-b + sqrtDiscriminant) / (2 * a);
+      if (t1 > 0) {
+        interceptTime = Math.min(interceptTime, t1);
+      }
+      if (t2 > 0) {
+        interceptTime = Math.min(interceptTime, t2);
+      }
+    }
+  }
+
+  if (!Number.isFinite(interceptTime)) {
+    return normalizeVector(toTarget);
+  }
+
+  const clampedInterceptTime = clamp(interceptTime, 0, maxLeadTicks);
+  const predictedPoint = {
+    x: targetPosition.x + targetVelocity.x * clampedInterceptTime,
+    y: targetPosition.y + targetVelocity.y * clampedInterceptTime,
+    z: targetPosition.z + targetVelocity.z * clampedInterceptTime,
+  };
+
+  return normalizeVector({
+    x: predictedPoint.x - missilePosition.x,
+    y: predictedPoint.y - missilePosition.y,
+    z: predictedPoint.z - missilePosition.z,
+  });
+};
+
+const getMissileProjectileEvasionDirection = (
+  missile: Missile_t,
+  missileDirection: Vec3_t,
+  state: SimulationState_t,
+  settings: SimulationSettings_t
+): Vec3_t | null => {
+  const worldUp = { x: 0, y: 1, z: 0 };
+  const threatRadiusSq = settings.missileProjectileEvasionRadius * settings.missileProjectileEvasionRadius;
+  let nearestThreatSq = Number.POSITIVE_INFINITY;
+  let evasionDirection: Vec3_t | null = null;
+
+  for (const projectile of state.projectiles.values()) {
+    if (projectile.roomId !== missile.roomId) {
+      continue;
+    }
+
+    if (projectile.ownerKind === "player" && projectile.ownerId === missile.ownerId) {
+      continue;
+    }
+
+    const fromProjectileToMissile = {
+      x: missile.position.x - projectile.position.x,
+      y: missile.position.y - projectile.position.y,
+      z: missile.position.z - projectile.position.z,
+    };
+    const distanceSq =
+      fromProjectileToMissile.x * fromProjectileToMissile.x +
+      fromProjectileToMissile.y * fromProjectileToMissile.y +
+      fromProjectileToMissile.z * fromProjectileToMissile.z;
+    if (distanceSq > threatRadiusSq || distanceSq >= nearestThreatSq) {
+      continue;
+    }
+
+    const projectileDirection = normalizeVector(projectile.velocity);
+    const towardsMissile = normalizeVector(fromProjectileToMissile);
+    const approach =
+      projectileDirection.x * towardsMissile.x +
+      projectileDirection.y * towardsMissile.y +
+      projectileDirection.z * towardsMissile.z;
+    if (approach < 0.82) {
+      continue;
+    }
+
+    let sideStep = cross(projectileDirection, missileDirection);
+    const sideLengthSq = sideStep.x * sideStep.x + sideStep.y * sideStep.y + sideStep.z * sideStep.z;
+    if (sideLengthSq <= 0.0001) {
+      sideStep = cross(projectileDirection, worldUp);
+    }
+
+    evasionDirection = normalizeVector({
+      x: sideStep.x * 1.2 + towardsMissile.x * 0.5,
+      y: sideStep.y * 0.8 + towardsMissile.y * 0.3,
+      z: sideStep.z * 1.2 + towardsMissile.z * 0.5,
+    });
+    nearestThreatSq = distanceSq;
+  }
+
+  return evasionDirection;
 };
 
 const applyDamageToDamageable = (
@@ -869,19 +1015,27 @@ export const tickSimulation = (state: SimulationState_t, settings: SimulationSet
 
     let direction = normalizeVector(missile.velocity);
     if (!missile.lostTarget) {
-      const targetPosition = getMissileTargetPosition(missile, state);
-      if (targetPosition) {
-        const desiredDirection = normalizeVector({
-          x: targetPosition.x - missile.position.x,
-          y: targetPosition.y - missile.position.y,
-          z: targetPosition.z - missile.position.z,
-        });
+      const targetState = getMissileTargetState(missile, state, settings);
+      if (targetState) {
+        const desiredDirection = getMissileLeadDirection(
+          missile.position,
+          targetState.position,
+          targetState.velocity,
+          settings.missileSpeed,
+          settings.missileLeadMaxTicks
+        );
         direction = normalizeVector(mixDirections(direction, desiredDirection, settings.missileTurnLerp));
-        missile.velocity = direction;
       } else {
         missile.lostTarget = true;
       }
     }
+
+    const evadeDirection = getMissileProjectileEvasionDirection(missile, direction, state, settings);
+    if (evadeDirection) {
+      direction = normalizeVector(mixDirections(direction, evadeDirection, settings.missileProjectileEvasionStrength));
+    }
+
+    missile.velocity = direction;
 
     missile.position.x += direction.x * settings.missileSpeed;
     missile.position.y += direction.y * settings.missileSpeed;
