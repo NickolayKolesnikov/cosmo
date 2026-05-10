@@ -146,6 +146,18 @@ export const usePlayerControls = ({
   }, [ensureAudioContext, hoveredTargetRef, isCrosshairHotRef, isPointerLocked, sendMessage, worldRef]);
 
   useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof Element)) {
+        return false;
+      }
+
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+        return true;
+      }
+
+      return target instanceof HTMLElement && target.isContentEditable;
+    };
+
     const sendInput = () => {
       if (!worldRef.current.roomId) {
         return;
@@ -172,6 +184,14 @@ export const usePlayerControls = ({
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!isPointerLocked) {
+        return;
+      }
+
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
       const mappedKey = codeToKeyStateField[event.code];
       if (!mappedKey) {
         return;
@@ -183,6 +203,14 @@ export const usePlayerControls = ({
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
+      if (!isPointerLocked) {
+        return;
+      }
+
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
       const mappedKey = codeToKeyStateField[event.code];
       if (!mappedKey) {
         return;
@@ -203,6 +231,10 @@ export const usePlayerControls = ({
       }
     };
 
+    if (!isPointerLocked) {
+      resetKeysAndStopInput();
+    }
+
     const pulseId = window.setInterval(sendInput, 250);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -216,7 +248,7 @@ export const usePlayerControls = ({
       window.removeEventListener("blur", onWindowBlur);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [keyStateRef, sendMessage, worldRef]);
+  }, [isPointerLocked, keyStateRef, sendMessage, worldRef]);
 
   return {
     isPointerLocked,
