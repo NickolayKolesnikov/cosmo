@@ -1,8 +1,9 @@
-import { useEffect, useState, type MutableRefObject } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { ClientMessage_t, MissileTarget_t, WorldState_t } from "@cosmos/shared";
 import { Quaternion, Vector3 } from "three";
 
 const mouseSensitivity = 0.0022;
+const arrowLookStep = 0.04;
 
 type KeyState_t = {
   w: boolean;
@@ -20,6 +21,20 @@ const codeToKeyStateField: Partial<Record<string, keyof KeyState_t>> = {
   KeyD: "d",
   KeyQ: "q",
   KeyE: "e",
+};
+
+type LookKeyState_t = {
+  arrowUp: boolean;
+  arrowDown: boolean;
+  arrowLeft: boolean;
+  arrowRight: boolean;
+};
+
+const codeToLookKeyStateField: Partial<Record<string, keyof LookKeyState_t>> = {
+  ArrowUp: "arrowUp",
+  ArrowDown: "arrowDown",
+  ArrowLeft: "arrowLeft",
+  ArrowRight: "arrowRight",
 };
 
 type UsePlayerControlsArgs_t = {
@@ -56,6 +71,29 @@ export const usePlayerControls = ({
   sendLook,
 }: UsePlayerControlsArgs_t) => {
   const [isPointerLocked, setIsPointerLocked] = useState<boolean>(false);
+  const lookKeyStateRef = useRef<LookKeyState_t>({
+    arrowUp: false,
+    arrowDown: false,
+    arrowLeft: false,
+    arrowRight: false,
+  });
+
+  const tryLaunchHomingMissile = (): void => {
+    if (!worldRef.current.roomId) {
+      return;
+    }
+
+    const target = hoveredTargetRef.current;
+    if (!target || !isCrosshairHotRef.current) {
+      return;
+    }
+
+    sendMessage({
+      type: "launch_homing",
+      targetId: target.targetId,
+      targetKind: target.targetKind,
+    });
+  };
 
   useEffect(() => {
     const onPointerLockChange = () => {
@@ -103,6 +141,36 @@ export const usePlayerControls = ({
   ]);
 
   useEffect(() => {
+    const tickArrowLook = () => {
+      if (!isPointerLocked || !worldRef.current.roomId) {
+        return;
+      }
+
+      const yawAngle =
+        (lookKeyStateRef.current.arrowLeft ? arrowLookStep : 0) +
+        (lookKeyStateRef.current.arrowRight ? -arrowLookStep : 0);
+      const pitchAngle =
+        (lookKeyStateRef.current.arrowUp ? arrowLookStep : 0) +
+        (lookKeyStateRef.current.arrowDown ? -arrowLookStep : 0);
+      if (yawAngle === 0 && pitchAngle === 0) {
+        return;
+      }
+
+      qYawRef.current.setFromAxisAngle(localUpRef.current, yawAngle);
+      qPitchRef.current.setFromAxisAngle(localRightRef.current, pitchAngle);
+      orientationRef.current.multiply(qYawRef.current).multiply(qPitchRef.current).normalize();
+
+      syncLookRefsFromOrientation();
+      sendLook();
+    };
+
+    const lookTickId = window.setInterval(tickArrowLook, 16);
+    return () => {
+      window.clearInterval(lookTickId);
+    };
+  }, [isPointerLocked, localRightRef, localUpRef, orientationRef, qPitchRef, qYawRef, sendLook, syncLookRefsFromOrientation, worldRef]);
+
+  useEffect(() => {
     const onMouseDown = (event: MouseEvent) => {
       if (event.button !== 0 && event.button !== 2) {
         return;
@@ -119,16 +187,7 @@ export const usePlayerControls = ({
         return;
       }
 
-      const target = hoveredTargetRef.current;
-      if (!target || !isCrosshairHotRef.current) {
-        return;
-      }
-
-      sendMessage({
-        type: "launch_homing",
-        targetId: target.targetId,
-        targetKind: target.targetKind,
-      });
+      tryLaunchHomingMissile();
     };
 
     const onContextMenu = (event: MouseEvent) => {
@@ -143,7 +202,7 @@ export const usePlayerControls = ({
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("contextmenu", onContextMenu);
     };
-  }, [ensureAudioContext, hoveredTargetRef, isCrosshairHotRef, isPointerLocked, sendMessage, worldRef]);
+  }, [ensureAudioContext, isPointerLocked, sendMessage, worldRef]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null): boolean => {
@@ -180,6 +239,10 @@ export const usePlayerControls = ({
       keyStateRef.current.d = false;
       keyStateRef.current.q = false;
       keyStateRef.current.e = false;
+      lookKeyStateRef.current.arrowUp = false;
+      lookKeyStateRef.current.arrowDown = false;
+      lookKeyStateRef.current.arrowLeft = false;
+      lookKeyStateRef.current.arrowRight = false;
       sendInput();
     };
 
@@ -192,14 +255,39 @@ export const usePlayerControls = ({
         return;
       }
 
+      if (event.code === "Space") {
+        event.preventDefault();
+        if (!event.repeat) {
+          ensureAudioContext();
+          sendMessage({ type: "shoot" });
+        }
+        return;
+      }
+
+      if (event.code === "KeyR") {
+        event.preventDefault();
+        if (!event.repeat) {
+          ensureAudioContext();
+          tryLaunchHomingMissile();
+        }
+        return;
+      }
+
       const mappedKey = codeToKeyStateField[event.code];
-      if (!mappedKey) {
+      if (mappedKey) {
+        event.preventDefault();
+        keyStateRef.current[mappedKey] = true;
+        sendInput();
+        return;
+      }
+
+      const mappedLookKey = codeToLookKeyStateField[event.code];
+      if (!mappedLookKey) {
         return;
       }
 
       event.preventDefault();
-      keyStateRef.current[mappedKey] = true;
-      sendInput();
+      lookKeyStateRef.current[mappedLookKey] = true;
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
@@ -211,14 +299,26 @@ export const usePlayerControls = ({
         return;
       }
 
+      if (event.code === "Space" || event.code === "KeyR") {
+        event.preventDefault();
+        return;
+      }
+
       const mappedKey = codeToKeyStateField[event.code];
-      if (!mappedKey) {
+      if (mappedKey) {
+        event.preventDefault();
+        keyStateRef.current[mappedKey] = false;
+        sendInput();
+        return;
+      }
+
+      const mappedLookKey = codeToLookKeyStateField[event.code];
+      if (!mappedLookKey) {
         return;
       }
 
       event.preventDefault();
-      keyStateRef.current[mappedKey] = false;
-      sendInput();
+      lookKeyStateRef.current[mappedLookKey] = false;
     };
 
     const onWindowBlur = () => {
@@ -248,7 +348,7 @@ export const usePlayerControls = ({
       window.removeEventListener("blur", onWindowBlur);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [isPointerLocked, keyStateRef, sendMessage, worldRef]);
+  }, [ensureAudioContext, isPointerLocked, keyStateRef, sendMessage, worldRef]);
 
   return {
     isPointerLocked,

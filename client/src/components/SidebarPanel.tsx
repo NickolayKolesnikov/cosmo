@@ -36,7 +36,7 @@ export const SidebarPanel = ({
       </p>
       <p>
         {world.roomId
-          ? "Click 3D view to lock mouse. Move mouse to rotate. W/S fly forward/back, A/D strafe, Q/E roll, LMB shoot, RMB launch homing missile on red target."
+          ? "Click 3D view to lock mouse. Move mouse or Arrow keys to rotate. W/S fly forward/back, A/D strafe, Q/E roll, LMB or Space shoot, RMB or R launch homing missile on red target."
           : "Create or join a room to start playing."}
       </p>
       <p>Mouse lock: {isPointerLocked ? "active" : "inactive"}</p>
