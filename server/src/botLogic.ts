@@ -456,6 +456,48 @@ const botTryShootProjectile = (
   state.lastBotShotAtMsByPlayer.set(botId, nowMs);
 };
 
+const botTryLaunchMissile = (
+  botId: PlayerId_t,
+  roomId: RoomId_t,
+  bot: PlayerState_t,
+  target: CombatTarget_t,
+  state: SimulationState_t,
+  settings: SimulationSettings_t,
+  nowMs: number
+): void => {
+  if (bot.missileAmmo <= 0) {
+    return;
+  }
+
+  const cooldownMs = 1200;
+  const lastHomingAtMs = state.lastBotHomingAtMsByPlayer.get(botId) ?? 0;
+  if (nowMs - lastHomingAtMs < cooldownMs) {
+    return;
+  }
+
+  const forward = rotateVectorByQuaternion({ x: 0, y: 0, z: -1 }, bot.orientation);
+  const normalized = normalizeVector(forward);
+  const missileId = randomUUID().slice(0, 12);
+  state.missiles.set(missileId, {
+    id: missileId,
+    ownerId: botId,
+    targetId: target.id,
+    targetKind: target.kind,
+    roomId,
+    position: {
+      x: bot.position.x + normalized.x * settings.projectileSpawnOffset,
+      y: bot.position.y + normalized.y * settings.projectileSpawnOffset,
+      z: bot.position.z + normalized.z * settings.projectileSpawnOffset,
+    },
+    velocity: normalized,
+    ticksLeft: settings.projectileLifetimeTicks,
+    lostTarget: false,
+  });
+
+  bot.missileAmmo -= 1;
+  state.lastBotHomingAtMsByPlayer.set(botId, nowMs);
+};
+
 export const tickBotPlayer = (
   botId: PlayerId_t,
   bot: PlayerState_t,
@@ -525,5 +567,6 @@ export const tickBotPlayer = (
 
   if (distanceSq <= attackDistanceSq) {
     botTryShootProjectile(botId, roomId, bot, state, settings, nowMs);
+    botTryLaunchMissile(botId, roomId, bot, enemy, state, settings, nowMs);
   }
 };

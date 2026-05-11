@@ -104,6 +104,7 @@ const transports = new Map<string, Transport_t>();
 const lastShotAtMsByPlayer = new Map<PlayerId_t, number>();
 const lastHomingAtMsByPlayer = new Map<PlayerId_t, number>();
 const lastBotShotAtMsByPlayer = new Map<PlayerId_t, number>();
+const lastBotHomingAtMsByPlayer = new Map<PlayerId_t, number>();
 const botPlayerIds = new Set<PlayerId_t>();
 const respawnTimerByPlayer = new Map<PlayerId_t, ReturnType<typeof setTimeout>>();
 
@@ -120,6 +121,7 @@ const simulationState: SimulationState_t = {
   transports,
   botPlayerIds,
   lastBotShotAtMsByPlayer,
+  lastBotHomingAtMsByPlayer,
   respawnTimerByPlayer,
 };
 
@@ -471,6 +473,7 @@ wss.on("connection", (socket) => {
     if (botPlayerIds.has(playerId)) {
       botPlayerIds.delete(playerId);
       lastBotShotAtMsByPlayer.delete(playerId);
+      lastBotHomingAtMsByPlayer.delete(playerId);
     }
     broadcastWorld();
   });

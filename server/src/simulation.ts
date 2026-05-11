@@ -70,6 +70,7 @@ export type SimulationState_t = {
   transports: Map<string, Transport_t>;
   botPlayerIds: Set<PlayerId_t>;
   lastBotShotAtMsByPlayer: Map<PlayerId_t, number>;
+  lastBotHomingAtMsByPlayer: Map<PlayerId_t, number>;
   respawnTimerByPlayer: Map<PlayerId_t, ReturnType<typeof setTimeout>>;
 };
 
