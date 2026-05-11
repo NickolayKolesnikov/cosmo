@@ -192,23 +192,24 @@ const moveBotNoBackward = (
   const forward = normalizeVector(rotateVectorByQuaternion({ x: 0, y: 0, z: -1 }, bot.orientation));
   const right = normalizeVector(rotateVectorByQuaternion({ x: 1, y: 0, z: 0 }, bot.orientation));
   const desired = normalizeVector(desiredDirection);
-  const forwardFactor = dot(forward, desired);
-  const clampedForward = Math.max(0, forwardFactor);
-  const strafeFactor = dot(right, desired);
+  const strafeFactor = clamp(dot(right, desired), -1, 1);
 
-  const moveVector = {
-    x: forward.x * clampedForward + right.x * strafeFactor,
-    y: forward.y * clampedForward + right.y * strafeFactor,
-    z: forward.z * clampedForward + right.z * strafeFactor,
-  };
-  const moveMagnitude = Math.sqrt(
-    moveVector.x * moveVector.x + moveVector.y * moveVector.y + moveVector.z * moveVector.z
+  // Keep forward input at 1.0 always, matching player forward-thrust behavior.
+  bot.position.x = clamp(
+    bot.position.x + (forward.x + right.x * strafeFactor) * settings.moveSpeed,
+    -settings.worldHalfExtent,
+    settings.worldHalfExtent
   );
-  if (moveMagnitude <= 0.0001) {
-    return;
-  }
-
-  movePlayerToward(bot, moveVector, settings.moveSpeed * clamp(moveMagnitude, 0, 1), settings.worldHalfExtent);
+  bot.position.y = clamp(
+    bot.position.y + (forward.y + right.y * strafeFactor) * settings.moveSpeed,
+    -settings.worldHalfExtent,
+    settings.worldHalfExtent
+  );
+  bot.position.z = clamp(
+    bot.position.z + (forward.z + right.z * strafeFactor) * settings.moveSpeed,
+    -settings.worldHalfExtent,
+    settings.worldHalfExtent
+  );
 };
 
 const getMissileEvasionDirection = (
